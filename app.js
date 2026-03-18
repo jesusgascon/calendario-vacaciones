@@ -9,7 +9,10 @@ const MASTER_PASSWORDS = ['B50449107', 'B99030074'];
 
 // Auto-detect if running via local proxy server (server.py)
 function isLocalProxy() {
-  return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const h = window.location.hostname;
+  return h === 'localhost' || h === '127.0.0.1' || 
+         h.startsWith('192.168.') || h.startsWith('10.') || 
+         h.startsWith('172.') || h.endsWith('.local');
 }
 
 const HOLIDAYS_ZGZ = {
@@ -205,8 +208,13 @@ function getWeekRange(date) {
   d.setDate(d.getDate() - day + 1);
   const from = fmtDate(d);
   d.setDate(d.getDate() + 6);
+  const fromObj = new Date(d); // just for consistency
   const to   = fmtDate(d);
   return { from, to };
+}
+function getDayRange(date) {
+  const d = fmtDate(date);
+  return { from: d, to: d };
 }
 function isToday(dateStr) {
   return dateStr === fmtDate(new Date());
@@ -250,7 +258,7 @@ function renderCompanySelector() {
     select.appendChild(opt);
   });
 
-  // Apply branding for active company
+  // Apply branding for active company IF we don't have it already
   const active = STATE.companies.find(c => c.companyId === STATE.companyId);
   if (active) applyCompanyBranding(active);
 }
@@ -263,13 +271,18 @@ function applyCompanyBranding(company) {
   if (nameDisplay) nameDisplay.textContent = name;
   
   // Custom Branding Logic
-  let brandColor = company.brandColor || '#60A5FA';
+  let brandColor = company.brandColor;
   let logoUrl = company.logoUrl;
 
-  if (name.toUpperCase().includes('FIBERCOM')) {
-    brandColor = '#e63946'; // Rojo corporativo
-  } else if (name.toUpperCase().includes('ARAGON')) {
-    brandColor = '#1d3557'; // Azul marino corporativo
+  // Fallback to corporate defaults if no manual color is provided
+  if (!brandColor) {
+    if (name.toUpperCase().includes('FIBERCOM')) {
+      brandColor = '#e63946'; // Rojo corporativo
+    } else if (name.toUpperCase().includes('ARAGON')) {
+      brandColor = '#1d3557'; // Azul marino corporativo
+    } else {
+      brandColor = '#60A5FA'; // Default blue
+    }
   }
 
   if (logoContainer) {
@@ -280,9 +293,79 @@ function applyCompanyBranding(company) {
     }
   }
 
-  // Inject brand color
-  document.documentElement.style.setProperty('--accent', brandColor);
+  // Inject brand color with contrast adjustment for dark mode
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  
+  // Create a lightened version for text/highlights in dark mode if needed
+  let accentColor = brandColor;
+  if (isDark) {
+    // If the color is very dark, we boost its brightness for the UI accents
+    // Simple way: if it starts with #00 or #1, it's likely dark.
+    // For a more robust fix, we'll just lighten any color slightly in dark mode 
+    // to make it "pop" against the near-black background.
+    accentColor = adjustColorBrightness(brandColor, 40); 
+  }
+
+  document.documentElement.style.setProperty('--accent', accentColor);
   document.documentElement.style.setProperty('--accent-glow', brandColor + '40');
+}
+
+/**
+ * Utility to lighten/darken a hex color
+ */
+function adjustColorBrightness(hex, percent) {
+  try {
+    hex = hex.replace('#', '');
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+
+    const calc = (v) => Math.min(255, Math.max(0, v + (percent * 2.55)));
+    
+    const newR = Math.round(calc(r)).toString(16).padStart(2, '0');
+    const newG = Math.round(calc(g)).toString(16).padStart(2, '0');
+    const newB = Math.round(calc(b)).toString(16).padStart(2, '0');
+    
+    return `#${newR}${newG}${newB}`;
+  } catch (e) {
+    return `#${hex}`; // Fallback
+  }
+}
+
+async function handleDeleteCompany() {
+  const cid = STATE.companyId;
+  if (!cid) return;
+  
+  const company = STATE.companies.find(c => c.companyId === cid);
+  const name = company ? (company.name || cid) : cid;
+  
+  if (!confirm(`\u26A0\uFE0F \u00BFEst\u00E1s seguro de que quieres eliminar la empresa "${name}"?\n\nEsta acci\u00F3n no se puede deshacer.`)) {
+    return;
+  }
+  
+  showLoading(true);
+  try {
+    const res = await fetch('/delete-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ companyId: cid })
+    });
+    
+    if (res.ok) {
+      // Clear localStorage so it doesn't try to reload the deleted company
+      clearCredentials();
+      window.location.reload();
+    } else {
+      const err = await res.json();
+      alert("Error: " + (err.error || "No se pudo eliminar la empresa."));
+      showLoading(false);
+    }
+  } catch (e) {
+    console.error("Error deleting company:", e);
+    alert("Error de conexi\u00F3n con el servidor.");
+    showLoading(false);
+  }
 }
 
 function switchCompany(cid) {
@@ -442,6 +525,11 @@ async function startApp() {
     showSetup();
   });
 
+  const deleteCompanyBtn = $('delete-company-btn');
+  if (deleteCompanyBtn) {
+    deleteCompanyBtn.addEventListener('click', handleDeleteCompany);
+  }
+
   $('modal-close').addEventListener('click', closeModal);
   $('day-modal').addEventListener('click', e => { if (e.target === $('day-modal')) closeModal(); });
 
@@ -457,6 +545,9 @@ async function startApp() {
       themeBtn.textContent = STATE.theme === 'light' ? '🌙' : '☀️';
       
       // Update UI components that depend on theme-aware colors
+      const active = STATE.companies.find(c => c.companyId === STATE.companyId);
+      if (active) applyCompanyBranding(active);
+      
       renderCalendar();
       renderFilters();
       renderStats();
@@ -472,7 +563,18 @@ async function startApp() {
     await loadInitialData();
     startAutoRefresh();
     loadWeather();
+  } else {
+    showSetup();
   }
+}
+
+function showSetup() {
+  showScreen('setup-screen');
+  if ($('token-input')) $('token-input').value = '';
+  if ($('company-input')) $('company-input').value = '';
+  if ($('name-input')) $('name-input').value = '';
+  if ($('color-input')) $('color-input').value = '';
+  if ($('logo-input')) $('logo-input').value = '';
 }
 
 
@@ -481,6 +583,9 @@ async function handleConnect() {
   const token     = $('token-input').value.trim();
   const companyId = $('company-input').value.trim();
   const backendUrl= $('backend-input').value.trim().replace(/\/+$/, '');
+  const manualName = $('name-input')?.value.trim();
+  const manualColor = $('color-input')?.value.trim();
+  const manualLogo = $('logo-input')?.value.trim();
 
   const err = $('setup-error');
   err.textContent = '';
@@ -500,9 +605,9 @@ async function handleConnect() {
     const companyData = meData.company || {};
     STATE.currentUser = meData.employee || (Array.isArray(meData) ? meData[0] : meData);
     
-    const companyName = companyData.name || 'Mi Empresa';
-    const brandColor = companyData.brandColor || null;
-    const logoUrl = companyData.logo || null;
+    const companyName = manualName || companyData.name || 'Mi Empresa';
+    const brandColor = manualColor || companyData.brandColor || null;
+    const logoUrl = manualLogo || companyData.logo || null;
     
     saveCredentials();
     await persistConfigToServer(companyName, brandColor, logoUrl);
@@ -630,9 +735,10 @@ async function loadData() {
 
 async function loadDataInternal() {
   try {
-    const range = STATE.calView === 'week'
-      ? getWeekRange(STATE.currentDate)
-      : getMonthRange(STATE.currentDate);
+    let range;
+    if (STATE.calView === 'day') range = getDayRange(STATE.currentDate);
+    else if (STATE.calView === 'week') range = getWeekRange(STATE.currentDate);
+    else range = getMonthRange(STATE.currentDate);
 
     // Expand range slightly to fill calendar grid
     const fromDate = new Date(range.from);
@@ -806,10 +912,25 @@ function renderUserInfo(user) {
 function updateMonthLabel() {
   const y = STATE.currentDate.getFullYear();
   const m = STATE.currentDate.getMonth();
-  $('current-month-label').textContent = `${MONTHS_ES[m]} ${y}`;
+  
+  if (STATE.calView === 'day') {
+    const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+    $('current-month-label').textContent = `${days[STATE.currentDate.getDay()]} ${STATE.currentDate.getDate()} de ${MONTHS_ES[m]} ${y}`;
+  } else if (STATE.calView === 'week') {
+    const range = getWeekRange(STATE.currentDate);
+    const from = new Date(range.from);
+    const to = new Date(range.to);
+    $('current-month-label').textContent = `${from.getDate()} ${MONTHS_ES[from.getMonth()].slice(0,3)} - ${to.getDate()} ${MONTHS_ES[to.getMonth()].slice(0,3)} ${y}`;
+  } else {
+    $('current-month-label').textContent = `${MONTHS_ES[m]} ${y}`;
+  }
 
-  // Count total absence events in month
-  const range = getMonthRange(STATE.currentDate);
+  // Count total absence events in current view range
+  let range;
+  if (STATE.calView === 'day') range = getDayRange(STATE.currentDate);
+  else if (STATE.calView === 'week') range = getWeekRange(STATE.currentDate);
+  else range = getMonthRange(STATE.currentDate);
+  
   let total = 0;
   Object.entries(STATE.calendarData).forEach(([date, entries]) => {
     if (date >= range.from && date <= range.to) {
@@ -828,7 +949,26 @@ function renderCalendar() {
   const y = STATE.currentDate.getFullYear();
   const m = STATE.currentDate.getMonth();
 
-  // First day of month (Mon=1…Sun=7)
+  if (STATE.calView === 'day') {
+    grid.style.gridTemplateColumns = '1fr';
+    grid.appendChild(buildDayCell(new Date(STATE.currentDate), false));
+    return;
+  }
+
+  if (STATE.calView === 'week') {
+    grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
+    const range = getWeekRange(STATE.currentDate);
+    let curr = new Date(range.from);
+    for (let i = 0; i < 7; i++) {
+      grid.appendChild(buildDayCell(new Date(curr), false));
+      curr.setDate(curr.getDate() + 1);
+    }
+    return;
+  }
+
+  // Monthly View (Default)
+  grid.style.gridTemplateColumns = 'repeat(7, 1fr)';
+  
   const firstDay = new Date(y, m, 1);
   let startDow = firstDay.getDay(); // 0=Sun
   if (startDow === 0) startDow = 7; // make Sun=7
@@ -849,7 +989,7 @@ function renderCalendar() {
     grid.appendChild(buildDayCell(date, false));
   }
 
-  // Next month fill to complete 6 rows
+  // Next month fill to complete rows
   const totalCells = grid.children.length;
   const remaining  = Math.ceil(totalCells / 7) * 7 - totalCells;
   for (let d = 1; d <= remaining; d++) {
@@ -1340,7 +1480,9 @@ async function showSubscriptionModal() {
 
 // ── Navigation ─────────────────────────────────────────────────────────────
 function shiftPeriod(dir) {
-  if (STATE.calView === 'week') {
+  if (STATE.calView === 'day') {
+    STATE.currentDate.setDate(STATE.currentDate.getDate() + dir);
+  } else if (STATE.calView === 'week') {
     STATE.currentDate.setDate(STATE.currentDate.getDate() + dir * 7);
   } else {
     STATE.currentDate.setMonth(STATE.currentDate.getMonth() + dir);

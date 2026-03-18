@@ -83,6 +83,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._proxy('POST', body)
         elif self.path == '/save-config':
             self._save_config(body)
+        elif self.path == '/delete-config':
+            self._delete_config(body)
         else:
             self.send_response(404)
             self.end_headers()
@@ -103,17 +105,26 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             cfg = load_config()
             
             # Upsert company
-            found = False
             cid = new_company.get("companyId")
+            found = False
             for i, c in enumerate(cfg["companies"]):
                 if c["companyId"] == cid:
+                    # MERGE: Keep existing metadata if new data is missing it
+                    for key in ["name", "brandColor", "logoUrl"]:
+                        if not new_company.get(key) and c.get(key):
+                            new_company[key] = c[key]
                     cfg["companies"][i] = new_company
                     found = True
                     break
+            
             if not found:
                 cfg["companies"].append(new_company)
             
+            # Sync top-level activeId and principal credentials
             cfg["activeId"] = cid
+            cfg["token"] = new_company.get("token")
+            cfg["companyId"] = cid
+            
             save_config(cfg)
             
             self.send_response(200)
@@ -121,7 +132,47 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._cors_headers()
             self.end_headers()
             self.wfile.write(b'{"ok":true}')
-            print(f'  💾  Config guardado para empresa: {cid}')
+            print(f'  💾  Config guardado y sincronizado para empresa: {cid}')
+        except Exception as e:
+            self.send_response(400)
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
+
+    def _delete_config(self, body):
+        try:
+            data = json.loads(body)
+            cid = data.get("companyId")
+            cfg = load_config()
+            
+            # Remove from list
+            initial_count = len(cfg["companies"])
+            cfg["companies"] = [c for c in cfg["companies"] if c["companyId"] != cid]
+            
+            if len(cfg["companies"]) < initial_count:
+                # If we deleted the active one, pick another
+                if cfg.get("activeId") == cid:
+                    if len(cfg["companies"]) > 0:
+                        new_active = cfg["companies"][0]
+                        cfg["activeId"] = new_active["companyId"]
+                        cfg["token"] = new_active.get("token")
+                        cfg["companyId"] = new_active["companyId"]
+                    else:
+                        cfg["activeId"] = ""
+                        cfg["token"] = ""
+                        cfg["companyId"] = ""
+                
+                save_config(cfg)
+                self.send_response(200)
+                self._cors_headers()
+                self.end_headers()
+                self.wfile.write(b'{"ok":true}')
+                print(f'  🗑️  Empresa eliminada: {cid}')
+            else:
+                self.send_response(404)
+                self._cors_headers()
+                self.end_headers()
+                self.wfile.write(b'{"error":"Company not found"}')
         except Exception as e:
             self.send_response(400)
             self._cors_headers()
