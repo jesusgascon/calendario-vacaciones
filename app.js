@@ -56,6 +56,7 @@ const STATE = {
   calView:      'month', // 'month' | 'week'
   activeView:   'calendar',
   isLoading:    false,  // Guard to prevent redundant loads
+  sidebarCollapsed: localStorage.getItem('ssm_sidebar_collapsed') === 'true',
 };
 
 let REFRESH_TIMER = null;
@@ -489,6 +490,17 @@ async function startApp() {
   $('today-btn').addEventListener('click', () => { STATE.currentDate = new Date(); loadData(); });
   $('refresh-btn').addEventListener('click', loadData);
   $('logout-btn').addEventListener('click', logout);
+  
+  $('sidebar-toggle').addEventListener('click', () => {
+    STATE.sidebarCollapsed = !STATE.sidebarCollapsed;
+    document.body.classList.toggle('sidebar-collapsed', STATE.sidebarCollapsed);
+    localStorage.setItem('ssm_sidebar_collapsed', STATE.sidebarCollapsed);
+  });
+
+  // Apply initial state
+  if (STATE.sidebarCollapsed) {
+    document.body.classList.add('sidebar-collapsed');
+  }
 
   // Wire employee filters
   const empSearch = $('employee-search');

@@ -281,6 +281,17 @@ body {
   overflow-y: auto;
   position: relative;
   z-index: 10;
+  transition: all var(--transition);
+}
+
+.sidebar-collapsed .sidebar {
+  width: 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  opacity: 0;
+  pointer-events: none;
+  border-right: none;
 }
 
 .sidebar-header {
@@ -579,6 +590,13 @@ body {
   flex: 1; display: flex; flex-direction: column;
   overflow: hidden;
   background: radial-gradient(ellipse 60% 50% at 80% 10%, rgba(108,99,255,0.06), transparent);
+  transition: all var(--transition);
+}
+
+.sidebar-toggle-btn {
+  margin-right: 14px;
+  flex-shrink: 0;
+  z-index: 100;
 }
 
 /* ---- Top Bar ---- */
