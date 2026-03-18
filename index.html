@@ -72,6 +72,24 @@
         </div>
 
         <div class="form-group">
+          <label for="name-input">🏷️ Nombre de Empresa (Opcional)</label>
+          <input type="text" id="name-input" placeholder="Ej: Mi Empresa" />
+          <small>Si se deja vacío, se usará el nombre de Sesame.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="color-input">🎨 Color de Marca (Opcional)</label>
+          <input type="text" id="color-input" placeholder="#hex o nombre de color" />
+          <small>Ej: #ff0000 o blue. Si se deja vacío, se usará el de Sesame.</small>
+        </div>
+
+        <div class="form-group">
+          <label for="logo-input">🖼️ URL del Logo (Opcional)</label>
+          <input type="text" id="logo-input" placeholder="https://..." />
+          <small>URL de una imagen pequeña. Si se deja vacío, se usará el de Sesame.</small>
+        </div>
+
+        <div class="form-group">
           <label for="backend-input">🌐 Backend URL</label>
           <input type="text" id="backend-input" value="https://back-eu1.sesametime.com" placeholder="https://back-eu1.sesametime.com" />
           <small>Normalmente <code>back-eu1.sesametime.com</code> para Europa.</small>
@@ -128,26 +146,30 @@
         </button>
       </nav>
 
-      <!-- Selector de Empresa -->
-      <div class="sidebar-section" id="company-selector-container">
-        <label class="section-title">🏢 Empresa Activa</label>
-        <div class="company-selector-wrapper">
-          <select id="company-select" class="company-select">
-            <!-- Populated by JS -->
-          </select>
-          <button id="add-company-btn" class="btn-icon-tiny" title="Añadir otra empresa">+</button>
+      <!-- Footer: Company Manager & Weather -->
+      <div class="sidebar-footer">
+        <div class="company-manager">
+          <span class="section-title">Empresa Activa</span>
+          <div class="company-control-row">
+            <select id="company-select" class="company-dropdown-styled"></select>
+            <button id="add-company-btn" class="btn-round-action" title="Añadir otra empresa">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </button>
+            <button id="delete-company-btn" class="btn-round-action delete" title="Eliminar empresa activa">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+            </button>
+          </div>
         </div>
-      
-      <!-- Weather Widget -->
-      <div id="weather-widget" class="sidebar-section">
-        <div class="weather-card glass">
-          <div id="weather-info">Cargando clima...</div>
+
+        <div id="weather-widget" style="margin-top: 4px;">
+          <div class="weather-card glass">
+            <div id="weather-info">Cargando clima...</div>
+          </div>
         </div>
-      </div>
       </div>
 
       <!-- Filters -->
-      <div class="sidebar-section">
+      <div class="sidebar-section flex-grow">
         <h3>Tipos de Ausencia</h3>
         <div id="absence-type-filters" class="filter-list">
           <div class="skeleton-filter"></div>
@@ -179,7 +201,10 @@
             <div class="user-role">Sesame HR</div>
           </div>
         </div>
-        <button id="logout-btn" class="btn-ghost" title="Cerrar sesión">🚪</button>
+        <button id="logout-btn" class="btn-ghost" title="Cerrar sesión">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:16px;height:16px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          Cerrar sesión
+        </button>
       </div>
     </aside>
 
@@ -201,6 +226,7 @@
           <div class="view-toggle">
             <button class="vt-btn active" data-cal-view="month">Mes</button>
             <button class="vt-btn" data-cal-view="week">Semana</button>
+            <button class="vt-btn" data-cal-view="day">Día</button>
           </div>
           <button id="theme-btn" class="btn-icon-round" title="Cambiar tema">🌙</button>
           <button id="subscribe-btn" class="btn-icon-round" title="Sincronizar con Google Calendar">🔗</button>

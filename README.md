@@ -12,42 +12,41 @@ Para arrancarlo, simplemente ejecuta en tu terminal:
 ./start.sh
 ```
 
-Esto levantará el servidor local en el puerto `8766` (`http://localhost:8766`) y abrirá tu navegador automáticamente. Nota: La aplicación redirige internamente a `http://localhost:8765` para el dashboard principal.
+Esto levantará el servidor local en el puerto `8765` (`http://localhost:8765`) y abrirá tu navegador automáticamente.
 
 ## ✨ Características Principales
 
-- **Dashboard Multivista**: Calendario (mes/semana), vista por empleado y estadísticas detalladas.
+- **Dashboard Multivista Dinámico**: Cambia instantáneamente entre vistas de **Mes**, **Semana** o **Día**. La navegación se adapta automáticamente al periodo seleccionado.
+- **Personalización de Marca (Branding)**: Posibilidad de configurar el nombre de la empresa, color corporativo y logo personalizado directamente desde la pantalla de configuración.
+- **Contraste Inteligente**: El sistema ajusta automáticamente el brillo de tu color de marca cuando el **Modo Oscuro** está activo para garantizar una legibilidad perfecta.
+- **Acceso LAN (Red Local)**: Soporta acceso a través de IPs locales (`192.168.x.x`, etc.) para que puedas consultar el calendario desde otros dispositivos de la oficina.
 - **Filtro de Empleados Inteligente**: Buscador en tiempo real y contador de selección (ej. "Empleados (5/25)").
-- **Filtro Automático de Ausencias**: La barra lateral oculta automáticamente los tipos de ausencia que no tienen registros en el periodo actual.
-- **Exportación iCal/Google Calendar**: Descarga un archivo `.ics` con todas las ausencias visibles para integrarlas en tu calendario personal.
-- **Modo Oscuro/Claro**: Cambio de tema instantáneo con persistencia en el navegador.
-- **Auto-Login**: Recuerda tus credenciales (Token USID y Company ID) de forma segura en un archivo local `config.json`.
+- **Exportación iCal/Google Calendar**: Descarga un archivo `.ics` o genera un enlace de suscripción para integrar las ausencias en tu calendario personal.
+- **Auto-Login Multicreencial**: Gestiona varias empresas y recuerda tus credenciales de forma segura en `config.json`.
 
 ## 🧠 Arquitectura y Archivos
 
-### `index.html` (Estructura)
-- Dashboard con diseño responsivo basado en CSS Grid y Flexbox.
-- Contiene los modales de detalle y el sistema de navegación entre vistas.
+### `index.html` (Interfaz)
+- Diseño responsivo con **Glassmorphism**.
+- Sistema de modales para detalles diarios y configuración inicial.
 
-### `app.js` (Cerebro)
-- Gestiona el estado global (`STATE`), las llamadas a la API y el renderizado dinámico.
-- **Logic Key**: Cruza los IDs de ausencia con los nombres reales de Sesame para evitar etiquetas genéricas.
-- **Exportación**: Genera el contenido del calendario siguiendo el estándar RFC 5545 (iCalendar).
+### `app.js` (Lógica de Aplicación)
+- Gestiona el estado global (`STATE`) y la reactividad de la UI.
+- **Branding Engine**: Aplica colores y logos detectando el contraste óptimo.
+- **Navigation logic**: Maneja los desplazamientos temporales según la vista activa.
 
-### `styles.css` (Diseño)
-- Estética moderna con efectos de cristal (glassmorphism) e interactividad suave.
-- Soporta temas dinámicos mediante variables CSS (`:root`).
+### `styles.css` (Estilos)
+- Temas dinámicos Claro/Oscuro mediante variables CSS.
+- Animaciones sutiles y micro-interacciones.
 
-### `server.py` (Backend)
-- Proxy para peticiones API y servidor de archivos estáticos. Maneja la persistencia de la configuración.
-
-### `get-token.py` (Utilidad)
-- Script auxiliar para facilitar la extracción del token `USID` del navegador.
+### `server.py` (Backend Proxy)
+- Actúa como puente para la API de Sesame y gestiona la lectura/escritura de `config.json`.
+- Permite la sincronización de configuraciones entre dispositivos en la misma red.
 
 ## 🛠️ Mantenimiento
 
-- **Token Caducado**: Si la app deja de cargar datos, actualiza el valor de la cookie `USID` en `config.json`.
-- **Nuevos Tipos de Ausencia**: Se cargan automáticamente desde la API de Sesame.
+- **Cambio de Empresa**: Puedes añadir nuevas empresas o eliminar las existentes desde el panel lateral.
+- **IP Local**: Si el servidor corre en `192.168.1.10`, puedes acceder desde cualquier otro PC de la red a esa misma dirección.
 
 ---
-*Desarrollado para ofrecer una visión clara y rápida del equipo.*
+*Desarrollado para ofrecer una visión clara, rápida y estética del equipo.*
