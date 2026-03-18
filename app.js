@@ -57,9 +57,28 @@ const STATE = {
   activeView:   'calendar',
   isLoading:    false,  // Guard to prevent redundant loads
   sidebarCollapsed: localStorage.getItem('ssm_sidebar_collapsed') === 'true',
+  sidebarSections: {
+    'absence-section': localStorage.getItem('sidebar_section_absence_collapsed') === 'true',
+    'employee-section': localStorage.getItem('sidebar_section_employee_collapsed') === 'true'
+  }
 };
 
 let REFRESH_TIMER = null;
+
+// ── Utils ───────────────────────────────────────────────────────────────────
+function toggleSection(sectionId) {
+  const section = document.getElementById(sectionId);
+  if (!section) return;
+
+  const isCollapsed = section.classList.toggle('is-collapsed');
+  STATE.sidebarSections[sectionId] = isCollapsed;
+  
+  // Persist
+  const storageKey = sectionId === 'absence-section' 
+    ? 'sidebar_section_absence_collapsed' 
+    : 'sidebar_section_employee_collapsed';
+  localStorage.setItem(storageKey, isCollapsed);
+}
 
 // ── DOM refs ───────────────────────────────────────────────────────────────
 const $  = id => document.getElementById(id);
@@ -497,6 +516,11 @@ async function startApp() {
     localStorage.setItem('ssm_sidebar_collapsed', STATE.sidebarCollapsed);
   });
 
+  // Restore sidebar sections state
+  Object.entries(STATE.sidebarSections).forEach(([id, collapsed]) => {
+    if (collapsed) document.getElementById(id)?.classList.add('is-collapsed');
+  });
+
   // Apply initial state
   if (STATE.sidebarCollapsed) {
     document.body.classList.add('sidebar-collapsed');
@@ -822,7 +846,7 @@ function renderFilters() {
 
   STATE.absenceTypes.forEach(type => {
     const count = counts[type.id] || 0;
-    // Show all types, even if count is 0, to maintain visibility
+    if (count === 0) return; // Ocultar si el conteo es 0
 
     const color = resolveColor(type.color);
     const chip = document.createElement('button');
