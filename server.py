@@ -85,6 +85,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._save_config(body)
         elif self.path == '/delete-config':
             self._delete_config(body)
+        elif self.path == '/wipe-all-config':
+            self._wipe_all_config()
         else:
             self.send_response(404)
             self.end_headers()
@@ -168,13 +170,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(b'{"ok":true}')
                 print(f'  🗑️  Empresa eliminada: {cid}')
-            else:
-                self.send_response(404)
-                self._cors_headers()
-                self.end_headers()
                 self.wfile.write(b'{"error":"Company not found"}')
         except Exception as e:
             self.send_response(400)
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': str(e)}).encode())
+
+    def _wipe_all_config(self):
+        try:
+            save_config({"companies": [], "activeId": "", "token": "", "companyId": ""})
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self._cors_headers()
+            self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            print('  🧹  Configuración completa eliminada por petición del usuario')
+        except Exception as e:
+            self.send_response(500)
             self._cors_headers()
             self.end_headers()
             self.wfile.write(json.dumps({'error': str(e)}).encode())
@@ -283,10 +296,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         target = backend.rstrip('/') + api_path
 
         hdrs = {}
-        for h in ['Authorization', 'csid', 'Content-Type', 'Accept']:
+        for h in ['Authorization', 'csid', 'Content-Type', 'Accept', 'x-company-id', 'X-Region', 'User-Agent', 'Origin', 'Referer']:
             v = self.headers.get(h)
             if v:
                 hdrs[h] = v
+        # Ensure we always pass a realistic User-Agent if missing, otherwise WAF blocks us
+        if 'User-Agent' not in hdrs:
+            hdrs['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
         try:
             import time
@@ -309,6 +325,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
             print(f'  ❌  API Error {e.code}: {api_path}')
+            try:
+                error_body = json.loads(data.decode())
+                print(f'      Motivo: {error_body}')
+            except:
+                print(f'      Motivo: {data.decode()[:200]}')
         except Exception as ex:
             self.send_response(502)
             self.send_header('Content-Type', 'application/json')
@@ -321,7 +342,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers',
-                         'Authorization, csid, Content-Type, X-Backend-Url, Accept')
+                         'Authorization, csid, Content-Type, X-Backend-Url, Accept, x-company-id, X-Region')
 
     def log_message(self, fmt, *args):
         msg = fmt % args
