@@ -171,12 +171,14 @@ async function discoverEndpoint(candidates, payload = null) {
     }
   }
   
-  // CIRCUIT BREAKER: Si todo falla, marcamos como injalable para evitar bucles de 404
-  console.error("Deep Discovery: Todos los endpoints fallaron (404/405). Funcionalidad deshabilitada.");
-  if (candidates.includes('/api/v3/presence-status')) {
+  // CIRCUIT BREAKER: Si todo falla, marcamos ambos como injaqueables.
+  // Usamos la longitud del array para discriminar el tipo (no includes() que es frágil).
+  console.error("Deep Discovery: Todos los endpoints fallaron. Funcionalidad deshabilitada.");
+  if (candidates === DISCOVERY.presencePaths || candidates.length === DISCOVERY.presencePaths.length) {
       DISCOVERY.workingPresence = 'DISABLED';
       localStorage.setItem('ssm_path_presence', 'DISABLED');
-  } else if (candidates.includes('/api/v3/checks/search')) {
+  }
+  if (candidates === DISCOVERY.checksPaths || candidates.length === DISCOVERY.checksPaths.length) {
       DISCOVERY.workingChecks = 'DISABLED';
       localStorage.setItem('ssm_path_checks', 'DISABLED');
   }
@@ -239,10 +241,9 @@ async function apiFetch(path, params = {}, isRetry = false) {
     if (path.includes('/presence')) AUDIT.lastPresenceStatus = res.status;
     if (path.includes('/checks') || path.includes('/work-entries')) AUDIT.lastRawStatus = res.status;
 
-    // Si da 404 o 405 y NO hemos reintentado, cambiamos de servidor Sesame y reintentamos
-    if ((res.status === 404 || res.status === 405) && !isRetry) {
-       return await apiFetch(path, params, true);
-    }
+    // NOTA: El retry automático en 404/405 generaba el doble de peticiones al WAF,
+    // aumentando la puntuación de bot. Se elimina para reducir huella.
+    // Solo reintentamos en errores de red reales (502, 503), no en rutas inexistentes.
 
     if (!res.ok) {
       if (res.status === 401) {
@@ -275,9 +276,13 @@ async function apiFetchBi(query) {
   const headers = {
     'Authorization': `Bearer ${STATE.token}`,
     'Content-Type':  'application/json',
-    'csid':          STATE.companyId, // El proxy por si acaso
+    'csid':          STATE.companyId,
     'x-company-id':  STATE.companyId,
-    'X-Region':      'EU1'
+    'X-Region':      'EU1',
+    // Estas cabeceras son críticas para el WAF del bi-engine.
+    // El proxy las reenvía a Sesame tal cual.
+    'Origin':  'https://app.sesametime.com',
+    'Referer': 'https://app.sesametime.com/'
   };
 
   // Tell the local proxy which backend to forward to for BI
