@@ -1,52 +1,61 @@
-# Calendario de Vacaciones - Sesame HR
+# 🗓️ Sesame Premium Dashboard
 
-Esta aplicación es un panel de control personalizado y avanzado para visualizar las vacaciones, ausencias y bajas de todo el equipo, utilizando la API interna de **Sesame HR**. Ofrece una experiencia más rica y filtrable que la interfaz estándar.
+Un dashboard de alta fidelidad y monitorización avanzada para **Sesame HR**. Diseñado para centralizar la gestión de vacaciones, ausencias de calendario y registros de actividad real en una interfaz panorámica, técnica y profesional.
 
-## 🚀 Cómo iniciar el proyecto
-
-El proyecto funciona con un **servidor proxy local** escrito en Python que se encarga de saltarse las restricciones de CORS del navegador.
-
-Para arrancarlo, simplemente ejecuta en tu terminal:
-
-```bash
-./start.sh
-```
-
-Esto levantará el servidor local en el puerto `8765` (`http://localhost:8765`) y abrirá tu navegador automáticamente.
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Frontend](https://img.shields.io/badge/frontend-JS%20Vanilla-yellow.svg)
+![Backend](https://img.shields.io/badge/backend-Python%20Proxy-green.svg)
 
 ## ✨ Características Principales
 
-- **Dashboard Multivista Dinámico**: Cambia instantáneamente entre vistas de **Mes**, **Semana** o **Día**. La navegación se adapta automáticamente al periodo seleccionado.
-- **Personalización de Marca (Branding)**: Posibilidad de configurar el nombre de la empresa, color corporativo y logo personalizado directamente desde la pantalla de configuración.
-- **Contraste Inteligente**: El sistema ajusta automáticamente el brillo de tu color de marca cuando el **Modo Oscuro** está activo para garantizar una legibilidad perfecta.
-- **Acceso LAN (Red Local)**: Soporta acceso a través de IPs locales (`192.168.x.x`, etc.) para que puedas consultar el calendario desde otros dispositivos de la oficina.
-- **Filtro de Empleados Inteligente**: Buscador en tiempo real y contador de selección (ej. "Empleados (5/25)").
-- **Exportación iCal/Google Calendar**: Descarga un archivo `.ics` o genera un enlace de suscripción para integrar las ausencias en tu calendario personal.
-- **Auto-Login Multicreencial**: Gestiona varias empresas y recuerda tus credenciales de forma segura en `config.json`.
+### 📊 Dashboard de Fichajes (Módulo de Actividad)
+- **Cruce Inteligente (Smart Match)**: Cruza automáticamente tus ausencias programadas (médico, gestión privada, baja) con los registros de fichaje para proporcionar un reporte de tiempo preciso.
+- **Tabla Técnica de Alta Densidad**: Visualiza horarios, duraciones exactas (h/m), tipo de actividad y ubicación de cada tramo.
+- **Timeline de Actividad**: Vista panorámica del día con indicadores visuales de Trabajo, Pausas y Ausencias detectadas.
+- **Exportación Directa**: Generación de reportes en formato CSV para gestión administrativa.
 
-## 🧠 Arquitectura y Archivos
+### 📅 Gestión de Vacaciones y Ausencias
+- **Vistas Múltiples**: Navegación por Mes, Semana y Día.
+- **Resumen Estadístico**: Monitorización de horas trabajadas vs teóricas del mes.
+- **Filtros Avanzados**: Filtrado por empleado y tipo de ausencia.
+- **Multicompañía**: Soporte para gestionar múltiples perfiles de empresa de forma sencilla.
 
-### `index.html` (Interfaz)
-- Diseño responsivo con **Glassmorphism**.
-- Sistema de modales para detalles diarios y configuración inicial.
+### 🎨 Experiencia de Usuario Premium
+- **Motor de Temas**: Soporte completo para **Modo Claro** y **Modo Oscuro** sincronizado en todas las secciones.
+- **Estética Empresarial**: Diseño compacto basado en grid, con sombras de profundidad y tipografía de precisión técnica.
+- **Reactividad**: Filtrado y búsqueda instantánea de empleados.
 
-### `app.js` (Lógica de Aplicación)
-- Gestiona el estado global (`STATE`) y la reactividad de la UI.
-- **Branding Engine**: Aplica colores y logos detectando el contraste óptimo.
-- **Navigation logic**: Maneja los desplazamientos temporales según la vista activa.
+## 🚀 Instalación Rápida
 
-### `styles.css` (Estilos)
-- Temas dinámicos Claro/Oscuro mediante variables CSS.
-- Animaciones sutiles y micro-interacciones.
+### Requisitos previos
+- Python 3.8 o superior instalado.
 
-### `server.py` (Backend Proxy)
-- Actúa como puente para la API de Sesame y gestiona la lectura/escritura de `config.json`.
-- Permite la sincronización de configuraciones entre dispositivos en la misma red.
+### Configuración
+1. Clona el repositorio (o descarga los archivos).
+2. Abre una terminal en la carpeta del proyecto.
+3. El proyecto no requiere dependencias externas pesadas, funciona con la librería estándar de Python.
 
-## 🛠️ Mantenimiento
+### Ejecución
+Usa el script de inicio proporcionado:
+```bash
+bash start.sh
+```
+O manualmente:
+```bash
+python3 server.py
+```
+Accede a la aplicación en: `http://localhost:8765`
 
-- **Cambio de Empresa**: Puedes añadir nuevas empresas o eliminar las existentes desde el panel lateral.
-- **IP Local**: Si el servidor corre en `192.168.1.10`, puedes acceder desde cualquier otro PC de la red a esa misma dirección.
+## 🛠️ Arquitectura Técnica
+
+El proyecto se divide en dos capas principales:
+1. **Frontend (HTML5/CSS3/Vanilla JS)**: Gestiona toda la lógica de visualización, gestión de estado local y el algoritmo de emparejamiento de fichajes.
+2. **Backend (Python Proxy)**: Actúa como puente para evitar problemas de CORS y centralizar las cookies de sesión de Sesame HR, permitiendo una comunicación segura con la API oficial.
+
+Para más detalles sobre el funcionamiento interno, consulta el archivo [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## 📄 Licencia
+Este proyecto está bajo la licencia MIT. Consulta el archivo [LICENSE](./LICENSE) para más detalles.
 
 ---
-*Desarrollado para ofrecer una visión clara, rápida y estética del equipo.*
+*Desarrollado con ❤️ para optimizar la gestión de equipos en Sesame HR.*

@@ -60,7 +60,9 @@ const STATE = {
   sidebarSections: {
     'absence-section': localStorage.getItem('sidebar_section_absence_collapsed') === 'true',
     'employee-section': localStorage.getItem('sidebar_section_employee_collapsed') === 'true'
-  }
+  },
+  currentModule: 'vacaciones',
+  employees: []
 };
 
 let REFRESH_TIMER = null;
@@ -95,41 +97,252 @@ function loadCredentials() {
   STATE.companyId = localStorage.getItem('ssm_companyId')  || null;
   STATE.backendUrl= localStorage.getItem('ssm_backendUrl') || 'https://back-eu1.sesametime.com';
 }
+// Global Audit & Discovery State
+const AUDIT = {
+  lastBiStatus: null,
+  lastRawStatus: null,
+  lastPresenceStatus: null,
+  lastMeStatus: null,
+  lastPresencePathTried: null,
+  isSearching: false
+};
+
+const DISCOVERY = {
+  presencePaths: [
+    '/api/v3/statistics/presence',
+    '/api/v3/presence-status',
+    '/api/v3/employees/presence',
+    '/api/v3/presence',
+    '/api/v3/attendance/presence',
+    '/api/v3/work-entries/presence',
+    '/api/v3/companies/{companyId}/employees/presence'
+  ],
+  checksPaths: [
+    '/api/v3/work-entries/search',
+    '/api/v3/checks/search',
+    '/api/v3/work-entries',
+    '/api/v3/checks',
+    '/api/v3/attendance',
+    '/api/v3/timesheets',
+    '/api/v3/work-entries/list',
+    '/api/v3/companies/{companyId}/work-entries/search',
+    '/api/v3/companies/{companyId}/work-entries',
+    '/api/v3/attendance/work-entries/search',
+    '/api/v3/companies/{companyId}/attendance/work-entries',
+    '/api/v3/companies/{companyId}/attendance/work-entries/search'
+  ],
+  workingPresence: localStorage.getItem('ssm_path_presence') || null,
+  workingChecks:   localStorage.getItem('ssm_path_checks') || null
+};
+
+// Función de Descubrimiento Inteligente: Prueba POST, si falla 405/404, prueba GET
+async function discoverEndpoint(candidates, payload = null) {
+  for (let path of candidates) {
+    // Si la ruta contiene {companyId}, la reemplazamos
+    if (path.includes('{companyId}') && STATE.companyId) {
+       path = path.replace('{companyId}', STATE.companyId);
+    }
+
+    const methodsToTry = payload ? ['POST', 'GET'] : ['GET'];
+    
+    for (const method of methodsToTry) {
+      try {
+        console.log(`Deep Discovery: Testing ${method} ${path}...`);
+        
+        // Si es GET, convertimos el payload en query params si existe
+        let finalPath = path;
+        let body = null;
+        
+        if (method === 'POST') {
+          body = JSON.stringify(payload);
+        } else if (method === 'GET' && payload) {
+          const qs = new URLSearchParams(payload).toString();
+          finalPath += (finalPath.includes('?') ? '&' : '?') + qs;
+        }
+
+        const res = await apiFetch(finalPath, { method, body });
+        // Si no dio error, hemos encontrado la ruta
+        console.log(`Deep Discovery: SUCCESS! -> ${method} ${finalPath}`);
+        return finalPath; 
+      } catch (e) {
+        console.warn(`Deep Discovery: Failed ${method} ${path}: ${e.message}`);
+        // Seguimos al siguiente método o ruta
+      }
+    }
+  }
+  
+  // CIRCUIT BREAKER: Si todo falla, marcamos como injalable para evitar bucles de 404
+  console.error("Deep Discovery: Todos los endpoints fallaron (404/405). Funcionalidad deshabilitada.");
+  if (candidates.includes('/api/v3/presence-status')) {
+      DISCOVERY.workingPresence = 'DISABLED';
+      localStorage.setItem('ssm_path_presence', 'DISABLED');
+  } else if (candidates.includes('/api/v3/checks/search')) {
+      DISCOVERY.workingChecks = 'DISABLED';
+      localStorage.setItem('ssm_path_checks', 'DISABLED');
+  }
+  
+  return null;
+}
+
 function clearCredentials() {
   localStorage.removeItem('ssm_token');
   localStorage.removeItem('ssm_companyId');
   localStorage.removeItem('ssm_backendUrl');
+  localStorage.removeItem('ssm_path_presence');
+  localStorage.removeItem('ssm_path_checks');
 }
 
 // ── API layer ──────────────────────────────────────────────────────────────
-async function apiFetch(path, params = {}) {
-  const url = new URL(`${apiBase()}${path}`);
+async function apiFetch(path, params = {}, isRetry = false) {
+  // 1. Determinar el servidor de Sesame objetivo (Redundancia)
+  let sesameBaseUrl = STATE.backendUrl || 'https://back-eu1.sesametime.com';
+  if (isRetry) {
+    sesameBaseUrl = sesameBaseUrl.includes('back-') 
+      ? sesameBaseUrl.replace('back-', 'api-') 
+      : sesameBaseUrl.replace('api-', 'back-');
+    console.warn(`Retry: Switching to alternative Sesame server: ${sesameBaseUrl}`);
+  }
+
+  // 2. IMPORTANTE: El navegador solo puede llamar al proxy local para evitar errores CORS (Failed to fetch)
+  // Construimos la URL final que el navegador realmente llamará
+  const finalUrl = new URL(`${apiBase()}${path}`);
+  
+  // Añadimos parámetros de búsqueda si existen
   Object.entries(params).forEach(([k, v]) => {
-    if (Array.isArray(v)) v.forEach(i => url.searchParams.append(k, i));
-    else url.searchParams.set(k, v);
+    if (k === 'method' || k === 'body') return;
+    if (Array.isArray(v)) v.forEach(i => finalUrl.searchParams.append(k, i));
+    else finalUrl.searchParams.set(k, v);
   });
 
+  // 3. Cabeceras que el proxy necesita reenviar a Sesame
   const headers = {
     'Authorization': `Bearer ${STATE.token}`,
     'Content-Type':  'application/json',
-    'csid':          STATE.companyId,
+    'Accept':        'application/json',
+    'x-company-id':  STATE.companyId || '',
+    'csid':          STATE.companyId || '',
+    'X-Sesame-Region': 'eu1',
+    'X-Backend-Url': sesameBaseUrl // El proxy leerá esto y sabrá a dónde ir
   };
 
-  // Tell the local proxy which backend to forward to
+  const fetchOptions = {
+    method: params.method || 'GET',
+    headers
+  };
+  if (params.body) fetchOptions.body = params.body;
+
+  try {
+    const res = await fetch(finalUrl.toString(), fetchOptions);
+    
+    // Rastrear estados para Auditoría
+    if (path.includes('/me')) AUDIT.lastMeStatus = res.status;
+    if (path.includes('/presence')) AUDIT.lastPresenceStatus = res.status;
+    if (path.includes('/checks') || path.includes('/work-entries')) AUDIT.lastRawStatus = res.status;
+
+    // Si da 404 o 405 y NO hemos reintentado, cambiamos de servidor Sesame y reintentamos
+    if ((res.status === 404 || res.status === 405) && !isRetry) {
+       return await apiFetch(path, params, true);
+    }
+
+    if (!res.ok) {
+      if (res.status === 401) {
+        throw new Error("Sesión caducada (401). Por favor vuelve a conectar.");
+      }
+      
+      // MIGRATION AUDIT: Intentar capturar el cuerpo del error de Sesame para diagnóstico
+      let serverDetail = "";
+      try {
+        const errorJson = await res.json();
+        serverDetail = `: ${JSON.stringify(errorJson)}`;
+      } catch (e) {}
+      
+      throw new Error(`Error de API ${res.status}${serverDetail || ` (${res.statusText})`}`);
+    }
+    
+    return await res.json();
+  } catch (err) {
+    // Si el error es "Failed to fetch", probablemente el servidor local python3 server.py no está corriendo
+    if (err.message === 'Failed to fetch') {
+       throw new Error("Error de Red: El puente local (servidor Python) no responde. ¿Está iniciado?");
+    }
+    throw err;
+  }
+}
+
+async function apiFetchBi(query) {
+  const url = '/api/v3/analytics/report-query';
+  
+  const headers = {
+    'Authorization': `Bearer ${STATE.token}`,
+    'Content-Type':  'application/json',
+    'csid':          STATE.companyId, // El proxy por si acaso
+    'x-company-id':  STATE.companyId,
+    'X-Region':      'EU1'
+  };
+
+  // Tell the local proxy which backend to forward to for BI
   if (isLocalProxy()) {
-    headers['X-Backend-Url'] = STATE.backendUrl || 'https://back-eu1.sesametime.com';
+    headers['X-Backend-Url'] = 'https://bi-engine.sesametime.com';
   }
 
-  const res = await fetch(url.toString(), { headers });
+  const res = await fetch(`${apiBase()}${url}`, { 
+    method: 'POST',
+    headers,
+    body: JSON.stringify(query)
+  });
 
   if (!res.ok) {
-    if (res.status === 401) {
-      throw new Error("Sesión caducada (401). Por favor vuelve a conectar.");
-    }
-    throw new Error(`Error de API ${res.status}: ${res.statusText}`);
+    AUDIT.lastBiStatus = res.status;
+    throw new Error(`BI API Error ${res.status} al consultar report-query`);
   }
+  AUDIT.lastBiStatus = res.status;
   return res.json();
 }
+
+/**
+ * Añade o actualiza un empleado en el estado global de forma robusta.
+ * Unifica los IDs como String y mezcla la información para no perder fotos.
+ */
+function upsertEmployee(emp) {
+  if (!emp || !emp.id) return;
+  const idStr = String(emp.id);
+  
+  const existing = STATE.allEmployees.get(idStr) || {};
+  
+  // Mezclamos la información, priorizando la que tenga más campos útiles (fotos, cargos)
+  const updated = {
+    ...existing,
+    ...emp,
+    id: emp.id // Mantenemos el ID original (podría ser Number) dentro del objeto por consistencia
+  };
+
+  // MEJORA AGRESIVA DE FOTOS: Buscamos en todos los campos posibles de Sesame
+  const photo = emp.imageProfileURL || emp.imageProfile || emp.photoUrl || emp.photo || emp.avatarUrl || emp.avatar || '';
+  
+  if (!photo && existing.imageProfileURL) {
+    updated.imageProfileURL = existing.imageProfileURL;
+  } else {
+    updated.imageProfileURL = photo;
+  }
+  
+  STATE.allEmployees.set(idStr, updated);
+  
+  // Sincronizar la lista plana para los módulos
+  STATE.employees = Array.from(STATE.allEmployees.values());
+  
+  // Actualizar el contador visual si existe
+  const badge = document.getElementById('profiles-count-badge');
+  if (badge) {
+    badge.innerHTML = `👤 Directorio: ${STATE.employees.length} perfiles`;
+    badge.style.display = 'block';
+  }
+
+  // Refrescar el panel lateral si está visible para que la cosecha sea instantánea en la UI
+  if (typeof renderEmployeeFilterList === 'function') {
+    renderEmployeeFilterList();
+  }
+}
+
 
 async function fetchMe() {
   const data = await apiFetch('/api/v3/security/me');
@@ -172,15 +385,83 @@ async function fetchCalendarGrouped(from, to, typeIds) {
   return data.data || data || [];
 }
 
+async function fetchPresence() {
+  try {
+    // 1. Si ya conocemos el camino
+    if (DISCOVERY.workingPresence === 'DISABLED') {
+        return [];
+    }
+    if (DISCOVERY.workingPresence) {
+      AUDIT.lastPresencePathTried = DISCOVERY.workingPresence;
+      const data = await apiFetch(DISCOVERY.workingPresence);
+      return data.data || data || [];
+    }
+
+    // 2. Si no, iniciar descubrimiento
+    AUDIT.isSearching = true;
+    const found = await discoverEndpoint(DISCOVERY.presencePaths);
+    if (found) {
+      DISCOVERY.workingPresence = found;
+      localStorage.setItem('ssm_path_presence', found);
+      return fetchPresence(); // Reintentar con la ruta guardada
+    }
+    
+    return [];
+  } catch (e) {
+    console.warn("Could not fetch presence data:", e);
+    return [];
+  } finally {
+    AUDIT.isSearching = false;
+  }
+}
+
 async function fetchEmployees() {
   try {
-    const data = await apiFetch(`/api/v3/companies/${STATE.companyId}/employees`);
-    return (data.data || data || []).map(e => ({
-      id: e.id,
-      firstName: e.firstName,
-      lastName: e.lastName,
-      imageProfileURL: e.imageProfileURL
-    }));
+    // 1. Intentamos el directorio global (tradicionalmente con más permisos)
+    let data = await apiFetch(`/api/v3/employees?limit=500`);
+    let results = data.data || data || [];
+
+    // 2. Si no devuelve casi nada, intentamos el directorio de contactos (diseñado para visibilidad entre pares)
+    if (results.length <= 1) {
+      console.log("[Directory] Falling back to contact-directory...");
+      const contactData = await apiFetch(`/api/v3/contact-directory?limit=500`);
+      results = contactData.data || contactData || [];
+    }
+
+    // 3. Fallback final: endpoint de empresa
+    if (results.length <= 1) {
+      console.log("[Directory] Falling back to company employees...");
+      const companyData = await apiFetch(`/api/v3/companies/${STATE.companyId}/employees?limit=500`);
+      results = companyData.data || companyData || [];
+    }
+
+    return results.map(e => {
+      // Intentar obtener la jornada laboral del contrato activo
+      const contract = (e.contracts && e.contracts.length > 0) ? e.contracts[0] : null;
+      const workdays = contract ? {
+        1: contract.mondaySeconds ?? 28800,
+        2: contract.tuesdaySeconds ?? 28800,
+        3: contract.wednesdaySeconds ?? 28800,
+        4: contract.fridaySeconds ?? 28800,
+        5: contract.fridaySeconds ?? 28800,
+        6: contract.saturdaySeconds ?? 0,
+        0: contract.sundaySeconds ?? 0
+      } : null;
+
+      return {
+        id: e.id,
+        firstName: e.firstName,
+        lastName: e.lastName,
+        imageProfileURL: e.imageProfileURL || e.photoUrl || e.avatarUrl || '',
+        email: e.email || e.companyEmail || '',
+        phone: e.personalPhone || e.companyPhone || e.phone || '',
+        jobTitle: e.jobTitle || e.position?.name || '',
+        birthDate: e.birthDate || e.birthday || e.dateOfBirth || e.date_of_birth || '',
+        hiringDate: e.hiringDate || e.dateOfJoined || e.joinedDate || e.createdAt || '',
+        workdays: workdays,
+        status: e.status // Proporcionado por el endpoint de presencia si se mezcla después
+      };
+    });
   } catch (e) {
     console.warn('Could not fetch full employee list:', e);
     return [];
@@ -222,6 +503,45 @@ function getMonthRange(date) {
   const to   = new Date(y, m+1, 0);
   return { from: fmtDate(from), to: fmtDate(to) };
 }
+
+function isBirthdayToday(dateStr) {
+  if (!dateStr) return false;
+  try {
+    const today = new Date();
+    // Sesame puede devolver YYYY-MM-DD o MM-DD o incluso DD/MM
+    let month, day;
+    
+    if (dateStr.includes('-')) {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        month = parseInt(parts[1]);
+        day = parseInt(parts[2]);
+      } else if (parts.length === 2) {
+        month = parseInt(parts[0]);
+        day = parseInt(parts[1]);
+      }
+    } else if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      day = parseInt(parts[0]);
+      month = parseInt(parts[1]);
+    }
+    
+    return month === (today.getMonth() + 1) && day === today.getDate();
+  } catch(e) { return false; }
+}
+
+function isAnniversaryToday(dateStr) {
+  if (!dateStr) return false;
+  try {
+    const today = new Date();
+    const parts = dateStr.split('T')[0].split('-');
+    if (parts.length < 3) return false;
+    const month = parseInt(parts[1]);
+    const day = parseInt(parts[2]);
+    return month === (today.getMonth() + 1) && day === today.getDate();
+  } catch(e) { return false; }
+}
+
 function getWeekRange(date) {
   const d = new Date(date);
   const day = d.getDay() || 7;
@@ -239,6 +559,40 @@ function getDayRange(date) {
 function isToday(dateStr) {
   return dateStr === fmtDate(new Date());
 }
+
+/**
+ * Comprueba si una fecha (YYYY-MM-DD) coincide con el día y mes actual (cumpleaños).
+ */
+function isBirthdayToday(dateStr) {
+  if (!dateStr) return false;
+  const today = new Date();
+  const d = new Date(dateStr);
+  return today.getDate() === d.getDate() && today.getMonth() === d.getMonth();
+}
+
+/**
+ * Comprueba si es el aniversario de contratación hoy.
+ */
+function isAnniversaryToday(dateStr) {
+  if (!dateStr) return false;
+  const today = new Date();
+  const d = new Date(dateStr);
+  // Solo si es el mismo día/mes y lleva al menos 1 año
+  return today.getDate() === d.getDate() && today.getMonth() === d.getMonth() && today.getFullYear() > d.getFullYear();
+}
+
+/**
+ * Retorna un icono según el origen del fichaje (BI Engine)
+ */
+function getOriginIcon(origin) {
+  if (!origin) return '❓';
+  const o = origin.toLowerCase();
+  if (o.includes('web')) return '💻';
+  if (o.includes('app') || o.includes('mobile')) return '📱';
+  if (o.includes('tablet') || o.includes('kiosk') || o.includes('kiosko')) return '📟';
+  return '📍';
+}
+
 
 // ── Multi-Company Config ───────────────────────────────────────────────────
 async function loadSavedConfig() {
@@ -484,8 +838,53 @@ function showScreen(screenId) {
 }
 
 /**
- * Lógica de inicio real una vez desbloqueado el panel.
+ * Alterna entre módulos principales (Vacaciones / Fichajes)
  */
+function switchModule(module) {
+  STATE.currentModule = module;
+  
+  // Actualizar estados visuales de los botones del switcher
+  $$('.module-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.module === module);
+  });
+  
+  // Ocultar/Mostrar wrappers de cada módulo con sus clases correspondientes
+  $$('.module-wrapper').forEach(w => {
+    w.style.display = 'none';
+    w.classList.remove('active');
+  });
+  
+  let activeWrapper = document.getElementById(`module-${module}-wrapper`);
+  // Fallback para nombres antiguos o simplificados
+  if (!activeWrapper && module === 'vacaciones') activeWrapper = document.getElementById('calendar-wrapper');
+  
+  if (activeWrapper) {
+    activeWrapper.style.display = 'block';
+    activeWrapper.classList.add('active');
+  }
+
+  // Control de visibilidad del sidebar según el módulo
+  const sidebarNav = document.querySelector('.sidebar-nav');
+  const absenceSection = document.getElementById('absence-section');
+  const employeeSection = document.getElementById('employee-section');
+  
+  if (module === 'fichajes') {
+    if (sidebarNav) sidebarNav.style.display = 'none';
+    if (absenceSection) absenceSection.style.display = 'none';
+    // Mantenemos la sección de empleados visible para permitir el filtrado múltiple
+    if (employeeSection) employeeSection.style.display = 'block';
+    
+    // Inicialización específica de Fichajes
+    FichajesModule.init();
+    FichajesModule.loadData();
+  } else {
+    if (sidebarNav) sidebarNav.style.display = 'block';
+    if (absenceSection) absenceSection.style.display = 'block';
+    if (employeeSection) employeeSection.style.display = 'block';
+    loadData();
+  }
+}
+
 async function startApp() {
   loadCredentials();
 
@@ -503,6 +902,7 @@ async function startApp() {
   // Wire nav
   $$('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
   $$('.vt-btn').forEach(btn => btn.addEventListener('click', () => switchCalView(btn.dataset.calView)));
+  $$('.module-btn').forEach(btn => btn.addEventListener('click', () => switchModule(btn.dataset.module)));
 
   $('prev-month').addEventListener('click', () => shiftPeriod(-1));
   $('next-month').addEventListener('click', () => shiftPeriod(1));
@@ -521,6 +921,31 @@ async function startApp() {
     if (collapsed) document.getElementById(id)?.classList.add('is-collapsed');
   });
 
+  // Botón para guiar a la multiselección desde Fichajes
+  const btnMulti = $('btn-show-multi-filter');
+  if (btnMulti) {
+    btnMulti.onclick = () => {
+      // Si la sidebar está colapsada, la abrimos
+      if (document.body.classList.contains('sidebar-collapsed')) {
+        document.body.classList.remove('sidebar-collapsed');
+        STATE.sidebarCollapsed = false;
+        localStorage.setItem('ssm_sidebar_collapsed', false);
+      }
+      // Aseguramos que la sección de empleados no esté colapsada internamente
+      const empSection = document.getElementById('employee-section');
+      if (empSection && empSection.classList.contains('is-collapsed')) {
+        empSection.classList.remove('is-collapsed');
+      }
+      // Scroll suave hasta la lista de filtros
+      const empFilterList = $('employee-filter-list');
+      if (empFilterList) {
+        empFilterList.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        empFilterList.classList.add('highlight-flash');
+        setTimeout(() => empFilterList.classList.remove('highlight-flash'), 2000);
+      }
+    };
+  }
+
   // Apply initial state
   if (STATE.sidebarCollapsed) {
     document.body.classList.add('sidebar-collapsed');
@@ -536,14 +961,22 @@ async function startApp() {
     STATE.hiddenEmployeeIds.clear();
     renderEmployeeFilterList();
     renderFilters(); renderCalendar(); renderEmployeeList(); renderStats();
+    
+    if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
+      FichajesModule.renderTable();
+    }
   });
   
   const empSelNone = $('emp-sel-none');
   if(empSelNone) empSelNone.addEventListener('click', (e) => {
     e.preventDefault();
-    STATE.allEmployees.forEach((emp, id) => STATE.hiddenEmployeeIds.add(id));
+    STATE.allEmployees.forEach((emp, id) => STATE.hiddenEmployeeIds.add(String(id)));
     renderEmployeeFilterList();
     renderFilters(); renderCalendar(); renderEmployeeList(); renderStats();
+    
+    if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
+      FichajesModule.renderTable();
+    }
   });
 
   const exportBtn = $('export-btn');
@@ -569,26 +1002,39 @@ async function startApp() {
   $('modal-close').addEventListener('click', closeModal);
   $('day-modal').addEventListener('click', e => { if (e.target === $('day-modal')) closeModal(); });
 
-  // Apply initial theme
-  document.documentElement.setAttribute('data-theme', STATE.theme);
-  const themeBtn = $('theme-btn');
-  if (themeBtn) {
-    themeBtn.textContent = STATE.theme === 'light' ? '🌙' : '☀️';
-    themeBtn.addEventListener('click', () => {
-      STATE.theme = STATE.theme === 'light' ? 'dark' : 'light';
-      document.documentElement.setAttribute('data-theme', STATE.theme);
-      localStorage.setItem('theme', STATE.theme);
-      themeBtn.textContent = STATE.theme === 'light' ? '🌙' : '☀️';
-      
-      // Update UI components that depend on theme-aware colors
-      const active = STATE.companies.find(c => c.companyId === STATE.companyId);
-      if (active) applyCompanyBranding(active);
-      
-      renderCalendar();
-      renderFilters();
-      renderStats();
+  // Multi-button theme toggle synchronization
+  const updateThemeUI = () => {
+    document.documentElement.setAttribute('data-theme', STATE.theme);
+    localStorage.setItem('theme', STATE.theme);
+    
+    // Update all theme buttons simultaneously
+    const themeButtons = document.querySelectorAll('.theme-toggle');
+    themeButtons.forEach(btn => {
+      btn.textContent = STATE.theme === 'light' ? '🌙' : '☀️';
     });
-  }
+
+    // Update UI components
+    const active = STATE.companies.find(c => c.companyId === STATE.companyId);
+    if (active) applyCompanyBranding(active);
+    
+    renderCalendar();
+    renderFilters();
+    renderStats();
+    
+    // Redraw signings if active to apply theme-aware table styles
+    if (STATE.currentModule === 'fichajes' && MODULES.fichajes) {
+      MODULES.fichajes.render();
+    }
+  };
+
+  const themeToggleButtons = document.querySelectorAll('.theme-toggle');
+  themeToggleButtons.forEach(btn => {
+    btn.textContent = STATE.theme === 'light' ? '🌙' : '☀️';
+    btn.addEventListener('click', () => {
+      STATE.theme = STATE.theme === 'light' ? 'dark' : 'light';
+      updateThemeUI();
+    });
+  });
 
   // Try loading credentials saved by get-token.py via server
   await loadSavedConfig();
@@ -627,6 +1073,49 @@ async function handleConnect() {
   err.textContent = '';
   err.classList.add('hidden');
 
+  // Acceso rápido por CIF: busca el token REAL guardado en config.json
+  const cifMap = {
+    'B50449107': 'Fibercom',
+    'B99030074': 'AragonPh'
+  };
+  const isBypassCIF = cifMap.hasOwnProperty(companyId);
+  if (isBypassCIF && !token) {
+    console.log("Acceso vía CIF: buscando token real guardado en config.json...");
+    try {
+      const res = await fetch('/config');
+      if (res.ok) {
+        const cfg = await res.json();
+        const matchName = cifMap[companyId];
+        const saved = (cfg.companies || []).find(c => 
+          c.name && c.name.toUpperCase().includes(matchName.toUpperCase())
+        );
+        if (saved && saved.token) {
+          console.log(`✅ Token real encontrado para ${saved.name}. Conectando con datos reales...`);
+          STATE.token = saved.token;
+          STATE.companyId = saved.companyId;
+          STATE.backendUrl = saved.backendUrl || 'https://back-eu1.sesametime.com';
+          saveCredentials();
+          showLoading(true);
+          try {
+            const meData = await fetchMe();
+            const companyData = meData.company || {};
+            STATE.currentUser = meData.employee || (Array.isArray(meData) ? meData[0] : meData);
+            await finalizeLogin(companyData);
+          } catch (e) {
+            showSetupError(`Token guardado caducado. Introduce un USID nuevo: ${e.message}`);
+            STATE.token = STATE.companyId = null;
+          } finally {
+            showLoading(false);
+          }
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("No se pudo leer config.json:", e);
+    }
+    return showSetupError('No hay token real guardado para este CIF. Introduce tu USID (Token) manualmente.');
+  }
+
   if (!token)     return showSetupError('Por favor introduce el token de sesión (USID).');
   if (!companyId) return showSetupError('Por favor introduce el Company ID.');
 
@@ -641,18 +1130,8 @@ async function handleConnect() {
     const companyData = meData.company || {};
     STATE.currentUser = meData.employee || (Array.isArray(meData) ? meData[0] : meData);
     
-    const companyName = manualName || companyData.name || 'Mi Empresa';
-    const brandColor = manualColor || companyData.brandColor || null;
-    const logoUrl = manualLogo || companyData.logo || null;
-    
-    saveCredentials();
-    await persistConfigToServer(companyName, brandColor, logoUrl);
-    showApp();
-    await loadInitialData();
-    await loadSavedConfig();
-    startAutoRefresh();
+    await finalizeLogin(companyData);
   } catch (e) {
-
     showSetupError(`No se pudo conectar: ${e.message}. Verifica el token y el Company ID.`);
     STATE.token = STATE.companyId = null;
   } finally {
@@ -660,8 +1139,39 @@ async function handleConnect() {
   }
 }
 
+async function finalizeLogin(companyData = {}) {
+  const manualName = $('name-input')?.value.trim();
+  const manualColor = $('color-input')?.value.trim();
+  const manualLogo = $('logo-input')?.value.trim();
+
+  const companyName = manualName || companyData.name || 'Mi Empresa';
+  const brandColor = manualColor || companyData.brandColor || null;
+  const logoUrl = manualLogo || companyData.logo || null;
+
+  saveCredentials();
+  if (typeof persistConfigToServer === 'function') {
+    await persistConfigToServer(companyName, brandColor, logoUrl);
+  }
+  
+  applyCompanyBranding({
+    id: STATE.companyId,
+    name: companyName,
+    brandColor: brandColor,
+    logo: logoUrl
+  });
+  
+  showApp();
+  await loadInitialData();
+  startAutoRefresh();
+  loadWeather();
+}
+
+/**
+ * Muestra el error de configuración en la UI
+ */
 function showSetupError(msg) {
   const err = $('setup-error');
+  if (!err) return;
   err.textContent = msg;
   err.classList.remove('hidden');
   showLoading(false);
@@ -694,7 +1204,7 @@ async function loadInitialData() {
   showLoading(true);
   
   try {
-    // 1. Parallel fetch of core metadata
+    // 1. Parallel fetch of core metadata (siempre datos reales)
     const [absTypes, meData, teamEmps] = await Promise.all([
       fetchAbsenceTypes(),
       fetchMe(),
@@ -727,20 +1237,32 @@ async function loadInitialData() {
 
     // 4. Process Employee Directory
     const me = STATE.currentUser;
+    const teamArray = Array.isArray(teamEmps) ? teamEmps : (teamEmps?.data || []);
+    
+    // El usuario actual siempre primero
     if (me && me.id) {
-      STATE.allEmployees.set(me.id, {
+      upsertEmployee({
+        ...me,
         id: me.id,
         firstName: me.firstName,
         lastName: me.lastName,
-        imageProfileURL: me.imageProfileURL
+        imageProfileURL: me.imageProfileURL,
+        email: me.email || '',
+        phone: me.personalPhone || me.companyPhone || me.phone || '',
+        birthDate: me.birthDate || me.birthday || me.dateOfBirth || me.date_of_birth || '',
+        hiringDate: me.hiringDate || me.dateOfJoined || me.joinedDate || me.createdAt || ''
       });
     }
 
-    teamEmps.forEach(emp => {
-      if (!STATE.allEmployees.has(emp.id)) {
-        STATE.allEmployees.set(emp.id, emp);
-      }
+    // El resto de la plantilla
+    teamArray.forEach(emp => {
+      upsertEmployee(emp);
     });
+
+    console.log(`[Diagnostic] Initial directory loaded: ${STATE.employees.length} profiles.`);
+
+
+
 
     // 5. Initial calendar load
     await loadDataInternal();
@@ -793,9 +1315,8 @@ async function loadDataInternal() {
       STATE.calendarData[date] = (dayObj.calendar_types || []).map(ct => {
         const emps = ct.employees || [];
         emps.forEach(emp => {
-          if (!STATE.allEmployees.has(emp.id)) {
-            STATE.allEmployees.set(emp.id, emp);
-          }
+          // COSECHA INTELIGENTE: Si el calendario trae perfiles nuevos o con más info (fotos), los guardamos
+          upsertEmployee(emp);
         });
 
         const rawType = ct.calendar_type || {};
@@ -805,7 +1326,7 @@ async function loadDataInternal() {
           type: {
             ...rawType,
             name: masterType.name || rawType.name || 'Ausencia',
-            color: masterType.color || rawType.color || 'ssmv2-purple'
+            color: masterType.color || 'ssmv2-purple'
           },
           employees: emps,
           numEmployees: ct.num_employees || 0,
@@ -894,23 +1415,43 @@ function renderEmployeeFilterList() {
     const name = `${emp.firstName||''} ${emp.lastName||''}`.trim();
     if (search && !name.toLowerCase().includes(search)) return;
     
-    const isHidden = STATE.hiddenEmployeeIds.has(emp.id);
+    const isHidden = STATE.hiddenEmployeeIds.has(String(emp.id));
+    
+    const presence = (FichajesModule.realtimePresence || []).find(p => String(p.employeeId) === String(emp.id));
+    const status = presence ? presence.status : 'out';
+    const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
     
     const label = document.createElement('label');
-    label.className = 'emp-filter-item';
+    label.className = 'emp-filter-item-premium';
     label.innerHTML = `
-      <input type="checkbox" value="${emp.id}" ${isHidden ? '' : 'checked'}>
-      <span class="emp-filter-name" title="${name}">${name}</span>
+      <div class="emp-filter-main">
+        <input type="checkbox" value="${emp.id}" ${isHidden ? '' : 'checked'} class="ssm-checkbox">
+        <div class="emp-avatar-filter" style="${emp.imageProfileURL ? '' : `background: linear-gradient(135deg, var(--accent), var(--accent2));`}">
+          ${emp.imageProfileURL 
+            ? `<img src="${emp.imageProfileURL}" alt="${name}" onerror="this.parentElement.innerHTML='${initials}'; this.parentElement.style.background='linear-gradient(135deg, var(--accent), var(--accent2))'">` 
+            : initials}
+          <span class="status-indicator ${status}" title="Estado: ${status}"></span>
+        </div>
+        <div class="emp-filter-info" style="margin-left: 12px;">
+          <span class="emp-filter-name" title="${name}" style="font-weight: 600;">${name}</span>
+          ${emp.jobTitle ? `<span class="emp-filter-job" style="font-size: 0.65rem;">${emp.jobTitle}</span>` : ''}
+        </div>
+      </div>
     `;
     
     label.querySelector('input').addEventListener('change', (e) => {
-      if (e.target.checked) STATE.hiddenEmployeeIds.delete(emp.id);
-      else STATE.hiddenEmployeeIds.add(emp.id);
+      if (e.target.checked) STATE.hiddenEmployeeIds.delete(String(emp.id));
+      else STATE.hiddenEmployeeIds.add(String(emp.id));
       
       renderFilters();
       renderCalendar();
       renderEmployeeList();
       renderStats();
+      
+      // Sincronizar Fichajes si el módulo está cargado
+      if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
+        FichajesModule.renderTable();
+      }
     });
     
     container.appendChild(label);
@@ -1559,9 +2100,19 @@ function showLoading(show) {
   $('loading-overlay').classList.toggle('hidden', !show);
 }
 
-function logout() {
+async function logout() {
   stopAutoRefresh();
   clearCredentials();
+
+  // Limpiar también el servidor si es entorno local
+  if (isLocalProxy()) {
+    try {
+      await fetch('/wipe-all-config', { method: 'POST' });
+      console.log("✅ Configuración del servidor limpiada.");
+    } catch (e) {
+      console.warn("No se pudo limpiar la configuración del servidor:", e);
+    }
+  }
 
   STATE.token = STATE.companyId = STATE.currentUser = null;
   STATE.absenceTypes = [];
@@ -1637,3 +2188,925 @@ function renderWeather(data) {
   html += '</div>';
   info.innerHTML = html;
 }
+// --- FICHAJES MODULE LOGIC ---
+/**
+ * FichajesModule
+ * Motor de gestión para la vista de actividad real.
+ * Se encarga de la navegación temporal, filtrado por empleado,
+ * exportación de reportes y visualización de la línea de tiempo.
+ */
+const FichajesModule = {
+  currentDate: new Date(),
+  currentView: 'month',
+  data: [],
+  selectedEmployee: 'all',
+  searchQuery: '',
+  presenceFilter: 'all', // 'all', 'working', 'paused'
+  kioskoMode: false,
+  
+  init() {
+    if (this.initialized) return;
+    this.initialized = true;
+    this.setupEventListeners();
+  },
+  
+  setupEventListeners() {
+    // Navegación Temporal
+    document.getElementById('prev-month-signings')?.addEventListener('click', () => {
+      if (this.currentView === 'day') this.currentDate.setDate(this.currentDate.getDate() - 1);
+      else if (this.currentView === 'week') this.currentDate.setDate(this.currentDate.getDate() - 7);
+      else this.currentDate.setMonth(this.currentDate.getMonth() - 1);
+      
+      this.updateMonthLabel();
+      this.loadData();
+    });
+    
+    document.getElementById('next-month-signings')?.addEventListener('click', () => {
+      if (this.currentView === 'day') this.currentDate.setDate(this.currentDate.getDate() + 1);
+      else if (this.currentView === 'week') this.currentDate.setDate(this.currentDate.getDate() + 7);
+      else this.currentDate.setMonth(this.currentDate.getMonth() + 1);
+      
+      this.updateMonthLabel();
+      this.loadData();
+    });
+
+    // Botón Hoy
+    document.getElementById('today-signings')?.addEventListener('click', () => {
+      this.currentDate = new Date();
+      this.updateMonthLabel();
+      this.loadData();
+    });
+
+    // Selector de Vista (Día, Semana, Mes)
+    const viewButtons = document.querySelectorAll('#fichajes-view-toggle .vt-btn');
+    viewButtons.forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const target = e.target.closest('.vt-btn');
+        if (!target) return;
+        
+        const view = target.dataset.fichajeView;
+        if (!view) return;
+        
+        // Actualizar UI activa
+        viewButtons.forEach(b => b.classList.remove('active'));
+        target.classList.add('active');
+        
+        // Cargar datos
+        this.currentView = view;
+        this.updateMonthLabel();
+        this.loadData();
+      });
+    });
+    
+    // Búsqueda en tiempo real
+    document.getElementById('signings-employee-search')?.addEventListener('input', (e) => {
+      this.searchQuery = e.target.value.toLowerCase();
+      this.renderTable();
+    });
+    
+    // Exportar a CSV
+    document.getElementById('export-signings-csv')?.addEventListener('click', () => {
+      this.exportToCSV();
+    });
+    
+    // Filtro por Empleado
+    document.getElementById('signings-employee-select')?.addEventListener('change', (e) => {
+      this.selectedEmployee = e.target.value;
+      this.renderTable();
+    });
+    // Theme toggle in signings header
+    document.getElementById('theme-btn-signings')?.addEventListener('click', () => {
+      toggleTheme();
+    });
+
+    // Refresh btn
+    document.getElementById('refresh-signings-btn')?.addEventListener('click', () => {
+      this.loadData();
+    });
+
+    // Sidebar toggle (needed for this module too)
+    document.getElementById('sidebar-toggle-fichajes')?.addEventListener('click', () => {
+      STATE.sidebarCollapsed = !STATE.sidebarCollapsed;
+      document.body.classList.toggle('sidebar-collapsed', STATE.sidebarCollapsed);
+      localStorage.setItem('ssm_sidebar_collapsed', STATE.sidebarCollapsed);
+    });
+
+    // Smart Presence Filters
+    document.getElementById('filter-live-working')?.addEventListener('click', () => this.togglePresenceFilter('working'));
+    document.getElementById('filter-live-paused')?.addEventListener('click', () => this.togglePresenceFilter('paused'));
+
+    // Kiosko Mode
+    document.getElementById('kiosko-mode-btn')?.addEventListener('click', () => this.toggleKioskoMode());
+    
+    // Listen for fullscreen change to sync state
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement) {
+        this.kioskoMode = false;
+        document.body.classList.remove('kiosko-mode-active');
+      }
+    });
+  },
+
+  togglePresenceFilter(type) {
+    if (this.presenceFilter === type) {
+      this.presenceFilter = 'all';
+    } else {
+      this.presenceFilter = type;
+    }
+    this.renderTable();
+  },
+
+  toggleKioskoMode() {
+    this.kioskoMode = !this.kioskoMode;
+    document.body.classList.toggle('kiosko-mode-active', this.kioskoMode);
+    
+    if (this.kioskoMode) {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          console.warn("Fullscreen error", err);
+        });
+      }
+    } else {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      }
+    }
+  },
+  
+  updateMonthLabel() {
+    const el = document.getElementById('current-month-signings');
+    if (!el) return;
+    
+    if (this.currentView === 'day') {
+      const hoy = new Date();
+      if (this.currentDate.toDateString() === hoy.toDateString()) {
+        el.textContent = "Hoy - " + this.currentDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' });
+      } else {
+        el.textContent = this.currentDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+      }
+    } else if (this.currentView === 'week') {
+      const start = new Date(this.currentDate);
+      const day = start.getDay() || 7; // Sunday is 0, make it 7
+      start.setDate(start.getDate() - day + 1);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      
+      el.textContent = `${start.toLocaleDateString('es-ES', {day: 'numeric', month: 'short'})} al ${end.toLocaleDateString('es-ES', {day: 'numeric', month: 'short', year: 'numeric'})}`;
+    } else {
+      el.textContent = this.currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+    }
+  },
+  
+  async loadData() {
+    let startDate = new Date(this.currentDate);
+    let endDate = new Date(this.currentDate);
+    
+    if (this.currentView === 'day') {
+      // startDate and endDate are the same
+    } else if (this.currentView === 'week') {
+      const day = startDate.getDay() || 7;
+      startDate.setDate(startDate.getDate() - day + 1);
+      endDate = new Date(startDate);
+      endDate.setDate(startDate.getDate() + 6);
+    } else {
+      startDate.setDate(1);
+      endDate = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+    }
+
+    const start = `${startDate.getFullYear()}-${String(startDate.getMonth()+1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
+    const end = `${endDate.getFullYear()}-${String(endDate.getMonth()+1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
+    
+    console.log("Loading Fichajes for", start, "to", end);
+    
+    try {
+      this.renderSkeletons();
+      
+      // RESTAURACIÓN DEL SELECTOR: Cargamos el desplegable nada más empezar
+      // para que el usuario pueda filtrar aunque la carga de datos falle.
+      this.populateEmployeeSelect();
+      
+      let biData = [];
+      try {
+        const res = await apiFetchBi({
+          "from": "schedule_context_check",
+          "select": [
+            {"field": "schedule_context_check.date", "alias": "date"},
+            {"field": "schedule_context_check.check_in_check_datetime", "alias": "checkIn"},
+            {"field": "schedule_context_check.check_out_check_datetime", "alias": "checkOut"},
+            {"field": "schedule_context_check.seconds_worked", "alias": "secondsWorked"},
+            {"field": "schedule_context_check.type", "alias": "type"},
+            {"field": "schedule_context_check.check_in_latitude", "alias": "checkInLat"},
+            {"field": "schedule_context_check.check_in_longitude", "alias": "checkInLon"},
+            {"field": "schedule_context_check.check_out_latitude", "alias": "checkOutLat"},
+            {"field": "schedule_context_check.check_out_longitude", "alias": "checkOutLon"},
+            {"field": "schedule_context_check.origin", "alias": "origin"},
+            {"field": "core_context_employee.name", "alias": "employeeName"},
+            {"field": "core_context_employee.id", "alias": "employeeId"}
+          ],
+          "where": [
+            {"field": "schedule_context_check.date", "operator": ">=", "value": start},
+            {"field": "schedule_context_check.date", "operator": "<=", "value": end}
+          ],
+          "order_by": [{"field": "date", "direction": "DESC"}],
+          "limit": 5000
+        });
+        biData = res.data || res || [];
+      } catch (biErr) {
+        console.warn("BI Engine failed (Expected 403):", biErr);
+        // Silenciamos para Auditoría
+      }
+      
+      // 2. Cargar ausencias/festivos en el mismo rango para ajustar jornada teórica
+      const absRes = await fetchCalendarGrouped(start, end, []);
+      const localAbsences = {};
+      absRes.forEach(dayObj => {
+        if (dayObj.date) {
+          localAbsences[dayObj.date] = dayObj.calendar_types || [];
+          // COSECHA INTELIGENTE: También extraemos perfiles desde aquí
+          localAbsences[dayObj.date].forEach(ct => {
+            (ct.employees || []).forEach(emp => upsertEmployee(emp));
+          });
+        }
+      });
+
+      // 3. Carga en paralelo de Presencia Real-time para contadores
+      console.log("Fetching live presence...");
+      const presenceRes = await fetchPresence();
+      this.realtimePresence = presenceRes;
+      
+      // Sincronizar perfiles desde presencia (a veces trae fotos que otros no)
+      presenceRes.forEach(p => {
+        if (p.employee) upsertEmployee(p.employee);
+      });
+
+      this.data = this.parseRealSignings(biData, localAbsences);
+      console.log(`BI Data parsed: ${this.data.length} employees with activity.`);
+
+      // SUPER FALLBACK: Si no hay datos en BI, intentamos descubrir la ruta correcta de registros individuales
+      if (this.data.length === 0) {
+        console.warn("BI Engine failed. Starting discovery for Raw Checks...");
+        AUDIT.isSearching = true;
+        try {
+          const payload = { from: start, to: end, limit: 2000 };
+          let foundPath = DISCOVERY.workingChecks;
+
+          if (!foundPath && foundPath !== 'DISABLED') {
+            foundPath = await discoverEndpoint(DISCOVERY.checksPaths, payload);
+            if (foundPath && foundPath !== 'DISABLED') {
+              DISCOVERY.workingChecks = foundPath;
+              localStorage.setItem('ssm_path_checks', foundPath);
+            }
+          }
+
+          if (foundPath && foundPath !== 'DISABLED') {
+            const rawChecks = await apiFetch(foundPath, {
+              method: 'POST',
+              body: JSON.stringify(payload)
+            });
+            const rawData = rawChecks.data || rawChecks || [];
+            
+            if (rawData.length > 0) {
+               console.log(`Discovery match recovered ${rawData.length} raw check segments.`);
+             const mappedData = rawData.map(c => ({
+               date: (c.checkIn || c.checkOut || start).split('T')[0],
+               checkIn: c.checkIn,
+               checkOut: c.checkOut,
+               secondsWorked: c.secondsWorked || 0,
+               type: c.type || 'work',
+               origin: c.origin || 'Oficina',
+               employeeName: (c.employee ? `${c.employee.firstName} ${c.employee.lastName}` : (c.employeeName || `Empleado #${c.employeeId || '?' }`)).trim() || 'Empleado',
+               employeeId: c.employee?.id || c.employeeId
+             }));
+             this.data = this.parseRealSignings(mappedData, localAbsences);
+            }
+          }
+        } catch (err) {
+          console.error("Master Fallback (Checks) failed:", err);
+        } finally {
+          AUDIT.isSearching = false;
+        }
+      }
+      
+      // FINAL MERGE: Si seguimos sin datos pero hay gente PRESENTE (fetchPresence), 
+      // generamos registros "fantasma" para que al menos se vean en la lista.
+      if (this.data.length === 0 && this.realtimePresence.length > 0) {
+        console.log("Merging presence into empty findings...");
+        this.realtimePresence.forEach(p => {
+          if ((p.status === 'work' || p.status === 'pause') && p.employee) {
+             const emp = p.employee;
+             this.data.push({
+               employeeId: emp.id,
+               employeeName: `${emp.firstName} ${emp.lastName}`,
+               photoUrl: emp.imageProfileURL || '',
+               date: new Date().toISOString().split('T')[0],
+               dayName: 'Hoy',
+               entries: [{ in: 'En vivo', out: '--:--', type: p.status, typeLabel: p.status === 'work' ? 'Trabajando' : 'Pausa' }],
+               workedSeconds: 0,
+               theoreticSeconds: 28800,
+               isLive: true
+             });
+          }
+        });
+      }
+
+      if (this.data.length === 0) {
+        const msg = AUDIT.isSearching ? "Buscando puerta de enlace alternativa..." : (isLocalProxy() ? "Sesame no ha devuelto registros para este periodo." : "Sin datos.");
+        
+        // Reporte de Auditoría para el usuario
+        const auditInfo = [
+          `Estadísticas(BI): ${AUDIT.lastBiStatus || '?' }`,
+          `Registros(Raw): ${AUDIT.lastRawStatus || '?' }`,
+          `Presencia: ${AUDIT.lastPresenceStatus || '?' }`,
+          `Perfil Me: ${AUDIT.lastMeStatus || '?' }`
+        ].join(' | ');
+
+        document.getElementById('signings-tbody').innerHTML = `
+          <tr>
+            <td colspan="4" style="text-align:center; padding: 60px 40px; color: var(--text-muted);">
+              <div style="font-size: 1.1rem; font-weight: 500; margin-bottom: 12px;">${msg}</div>
+              <div style="font-size: 11px; opacity: 0.5; font-family: monospace;">Diagnóstico: ${auditInfo}</div>
+              <div style="font-size: 10px; opacity: 0.4; margin-top: 4px;">Ruta pres. activa: ${DISCOVERY.workingPresence || 'Buscando...'}</div>
+              <div style="margin-top: 20px;">
+                <button class="btn-secondary" onclick="FichajesModule.loadData()" style="font-size: 0.75rem;">Reintentar auditoría profunda</button>
+              </div>
+            </td>
+          </tr>`;
+        this.renderPresenceSummaryOnly();
+      } else {
+        this.renderTable();
+      }
+      
+      // REFRESCAR BARRA LATERAL: Para que los puntos de estado se vean al instante tras la carga
+      renderEmployeeFilterList();
+
+    } catch (err) {
+      console.error("Error al cargar fichajes:", err);
+      document.getElementById('signings-tbody').innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 40px; color: #ff5555;">Error al conectar con Sesame: ${err.message}</td></tr>`;
+    } finally {
+      // Finalizado
+    }
+  },
+
+  renderSkeletons() {
+    const tbody = document.getElementById('signings-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = Array(6).fill(0).map(() => `
+      <tr class="skeleton-row">
+        <td><div class="skeleton-box" style="width: 150px;"></div></td>
+        <td><div class="skeleton-box" style="width: 100px;"></div></td>
+        <td><div class="skeleton-box" style="width: 120px;"></div></td>
+        <td><div class="skeleton-box" style="width: 100%;"></div></td>
+      </tr>
+    `).join('');
+  },
+
+  setupAutoRefresh() {
+    if (this.refreshInterval) clearInterval(this.refreshInterval);
+    
+    const isToday = this.currentDate.toDateString() === new Date().toDateString();
+    if (this.currentView === 'day' && isToday) {
+      this.refreshInterval = setInterval(() => {
+        if (STATE.currentModule === 'fichajes') {
+          console.log("Auto-refreshing dashboard...");
+          this.loadData();
+        }
+      }, 120000); // 2 minutos
+    }
+  },
+  
+  populateEmployeeSelect() {
+    const select = document.getElementById('signings-employee-select');
+    if (!select) return;
+    
+    // Guardar selección actual
+    const current = select.value;
+    select.innerHTML = '<option value="all">👥 Ver a todo el equipo</option>';
+    
+    const sorted = [...STATE.employees].sort((a,b) => a.firstName.localeCompare(b.firstName));
+    sorted.forEach(emp => {
+      const opt = document.createElement('option');
+      opt.value = emp.id;
+      opt.textContent = `${emp.firstName} ${emp.lastName}`;
+      select.appendChild(opt);
+    });
+    
+    select.value = current;
+    if (select.value === "") select.value = "all";
+  },
+  
+  /**
+   * Algoritmo de orquestación y cruce (Smart Match).
+   * Transforma los registros RAW de Sesame BI en una estructura agrupada por empleado/día,
+   * asignando etiquetas de ausencia a los tramos de trabajo que coincidan temporalmente.
+   * @param {Array} biData - Registros brutos de fichajes.
+   * @param {Object} localAbsences - Mapa de ausencias del calendario por fecha.
+   * @returns {Array} Listado procesado listo para renderizar.
+   */
+  parseRealSignings(biData, localAbsences = {}) {
+    // biData is an array of records like:
+    // { date: "2026-04-15", checkIn: "...", checkOut: "...", secondsWorked: 9766, employeeName: "...", employeeId: "..." }
+    const out = [];
+    
+    // Group them by Employee + Date
+    const grouped = {};
+    for (const record of biData) {
+      const key = `${record.employeeId}_${record.date}`;
+      if (!grouped[key]) {
+        // Find if there's an absence for this date/employee
+        let absenceLabel = "";
+        let absenceSegments = [];
+        const dayAbsences = localAbsences[record.date] || [];
+        for (const ct of dayAbsences) {
+          const emps = ct.employees || [];
+          // Comparación robusta de IDs para vincular ausencias con fichajes
+          const myAbs = emps.find(e => String(e.id) === String(record.employeeId));
+          if (myAbs) {
+            const rawType = ct.calendar_type || {};
+            const masterType = STATE.absenceTypes.find(t => t.id === rawType.id) || {};
+            absenceLabel = masterType.name || rawType.name || "Ausencia";
+            
+            // Búsqueda exhaustiva de horarios en múltiples formatos y sub-objetos
+            let sTimeRaw = myAbs.start_time || myAbs.startTime || myAbs.time_start || myAbs.timeStart || myAbs.time_from || myAbs.timeFrom || myAbs.start ||
+                             (myAbs.partialDay && (myAbs.partialDay.start_time || myAbs.partialDay.startTime)) ||
+                             (myAbs.details && (myAbs.details.start_time || myAbs.details.startTime));
+            
+            let eTimeRaw = myAbs.end_time || myAbs.endTime || myAbs.time_end || myAbs.timeEnd || myAbs.time_to || myAbs.timeTo || myAbs.end ||
+                             (myAbs.partialDay && (myAbs.partialDay.end_time || myAbs.partialDay.endTime)) ||
+                             (myAbs.details && (myAbs.details.end_time || myAbs.details.endTime));
+
+            // Soporte para segundos desde el inicio del día (formato Sesame BI)
+            if (!sTimeRaw && myAbs.start_time_seconds !== undefined) {
+              const h = Math.floor(myAbs.start_time_seconds / 3600);
+              const m = Math.floor((myAbs.start_time_seconds % 3600) / 60);
+              sTimeRaw = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:00`;
+            }
+            if (!eTimeRaw && myAbs.end_time_seconds !== undefined) {
+              const h = Math.floor(myAbs.end_time_seconds / 3600);
+              const m = Math.floor((myAbs.end_time_seconds % 3600) / 60);
+              eTimeRaw = `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:00`;
+            }
+
+            // Capturamos la ausencia para el panel de detalles (aunque no se vea en la línea de tiempo gráfica)
+            absenceSegments.push({
+              start: sTimeRaw || "00:00:00",
+              end: eTimeRaw || "23:59:59",
+              isFullDay: !sTimeRaw,
+              label: absenceLabel,
+              color: masterType.color || 'var(--accent)'
+            });
+            // No hacemos break para permitir múltiples ausencias parciales el mismo día
+          }
+        }
+
+        // Find dayName
+        const dObj = new Date(record.date + 'T00:00:00');
+        let dayName = dObj.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' });
+        dayName = dayName.charAt(0).toUpperCase() + dayName.slice(1);
+        
+        grouped[key] = {
+          employeeId: record.employeeId,
+          employeeName: (record.employeeName || `Empleado #${record.employeeId || '?' }`).trim(),
+          date: record.date,
+          dayName: dayName,
+          totalWorkedSeconds: 0,
+          absenceLabel: absenceLabel,
+          absenceSegments: absenceSegments,
+          entries: []
+        };
+      }
+      
+      let inTime = "--:--";
+      if (record.checkIn) {
+        const inD = new Date(record.checkIn);
+        inTime = `${String(inD.getHours()).padStart(2,'0')}:${String(inD.getMinutes()).padStart(2,'0')}`;
+      }
+      let outTime = "--:--";
+      if (record.checkOut) {
+        const outD = new Date(record.checkOut);
+        outTime = `${String(outD.getHours()).padStart(2,'0')}:${String(outD.getMinutes()).padStart(2,'0')}`;
+      }
+      
+      // CRUCE INTELIGENTE: Si el fichaje solapa con una ausencia programada, usar ese tipo
+      let typeClass = record.type === 'work' ? 'work' : (record.type === 'pause' ? 'pause' : 'special');
+      let typeLabel = record.type === 'work' ? 'Trabajo' : (record.type === 'pause' ? 'Pausa' : record.type);
+      
+      const dayAbsences = grouped[key].absenceSegments || [];
+      const entryStart = record.checkIn ? new Date(record.checkIn).getTime() : 0;
+      
+      for (const abs of dayAbsences) {
+        // Convertir horario de ausencia (HH:mm:ss) a timestamp para comparar
+        const [h, m] = abs.start.split(':').map(Number);
+        const absDate = new Date(record.date + 'T00:00:00');
+        absDate.setHours(h, m, 0);
+        const absStartTs = absDate.getTime();
+        
+        // Emparejar solo si el fichaje empieza dentro del bloque de la ausencia parcial
+        if (entryStart >= absStartTs && entryStart < absStartTs + (4 * 3600 * 1000)) { // Margen de 4h
+           typeClass = 'private';
+           typeLabel = abs.label;
+           break;
+        }
+      }
+
+       let durationSeconds = 0;
+       if (record.checkIn && record.checkOut) {
+         durationSeconds = (new Date(record.checkOut) - new Date(record.checkIn)) / 1000;
+       }
+       const durH = Math.floor(durationSeconds / 3600);
+       const durM = Math.round((durationSeconds % 3600) / 60);
+       const durationLabel = durationSeconds > 0 ? `${durH}h ${durM}m` : '--';
+
+       grouped[key].entries.push({
+         inOriginal: record.checkIn,
+         outOriginal: record.checkOut,
+         in: inTime,
+         out: outTime,
+         duration: durationLabel,
+         type: typeClass,
+         typeLabel: typeLabel,
+         loc: record.origin || 'Oficina'
+       });
+      
+      grouped[key].totalWorkedSeconds += (record.secondsWorked || 0);
+    }
+    
+    // Transform groups to array format expected by renderTable
+    const todayStr = new Date().toISOString().split('T')[0];
+    for (const key in grouped) {
+      const g = grouped[key];
+      // Sort entries by checkIn
+      g.entries.sort((a,b) => (a.inOriginal > b.inOriginal ? 1 : -1));
+      
+      // Detect if "LIVE" (any entry still open today)
+      const isLive = g.date === todayStr && g.entries.some(e => (!e.outOriginal || e.out === "--:--"));
+      
+      // Recuperar la jornada teórica y datos extra del empleado
+      // Comparación robusta de IDs para asegurar el cruce con el directorio
+      const emp = STATE.employees.find(e => String(e.id) === String(g.employeeId));
+      
+      // Forzar lectura en hora local para evitar desajustes de día de la semana
+      const dObj = new Date(g.date + 'T00:00:00'); 
+      const dayOfWeek = dObj.getDay(); // 0: Domingo, 1: Lunes...
+      let theoreticSeconds = 28800; // 8h por defecto
+      
+      if (emp && emp.workdays) {
+        theoreticSeconds = emp.workdays[dayOfWeek] ?? 28800;
+      }
+      
+      // Si hay ausencia (festivo, vacaciones), la jornada teórica suele ser 0
+      if (g.absenceLabel) {
+        theoreticSeconds = 0;
+      }
+      
+      out.push({
+        employeeId: g.employeeId,
+        employeeName: g.employeeName,
+        photoUrl: emp?.imageProfileURL || '',
+        jobTitle: emp?.jobTitle || '',
+        date: g.date,
+        dayName: g.dayName,
+        absenceLabel: g.absenceLabel,
+        inTime: g.entries[0]?.in ?? "--:--",
+        outTime: g.entries[g.entries.length - 1]?.out ?? "--:--",
+        workedSeconds: g.totalWorkedSeconds,
+        theoreticSeconds: theoreticSeconds,
+        absenceSegments: g.absenceSegments,
+        isLive: isLive,
+        entries: g.entries
+      });
+    }
+    return out;
+  },
+  
+  exportToCSV() {
+    if (!this.data.length) return alert("No hay datos para exportar");
+    
+    let csv = "\uFEFF"; // BOM para Excel
+    csv += "Empleado,Fecha,Hora Inicio,Hora Fin,Tipo,Jornada Real,Jornada Teórica\n";
+    
+    // Usamos los datos filtrados actualmente si se desea, o todos. 
+    // Por coherencia, exportaremos lo que se ve en pantalla (filtrado)
+    let filtered = this.data;
+    if (this.selectedEmployee !== 'all') {
+      filtered = filtered.filter(row => row.employeeId === this.selectedEmployee);
+    }
+    if (this.searchQuery) {
+      filtered = filtered.filter(row => row.employeeName.toLowerCase().includes(this.searchQuery));
+    }
+    
+    filtered.forEach(row => {
+      row.entries.forEach(e => {
+        csv += `"${row.employeeName}","${row.date}","${e.in}","${e.out}","${e.typeLabel}","",""\n`;
+      });
+      const h = Math.floor(row.workedSeconds / 3600);
+      const m = Math.floor((row.workedSeconds % 3600) / 60);
+      const theoH = Math.floor(row.theoreticSeconds / 3600);
+      const theoM = Math.floor((row.theoreticSeconds % 3600) / 60);
+      csv += `"${row.employeeName}","${row.date}","","","TOTAL JORNADA","${h}h ${m}m","${theoH}h ${theoM}m"\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `fichajes_sesame_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  },
+
+  
+  /**
+   * Renderiza la tabla de fichajes y el resumen de horas en la interfaz.
+   * Aplica filtros de búsqueda y selección de empleado en tiempo real.
+   */
+  renderTable() {
+    const tbody = document.getElementById('signings-tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    let filtered = this.data || [];
+    if (this.selectedEmployee && this.selectedEmployee !== 'all') {
+      const targetId = String(this.selectedEmployee);
+      filtered = filtered.filter(row => String(row.employeeId) === targetId);
+    }
+    
+    if (this.searchQuery) {
+      const q = String(this.searchQuery).toLowerCase();
+      filtered = filtered.filter(row => String(row.employeeName || '').toLowerCase().includes(q));
+    }
+
+    // Filtros de fecha y presencia omitidos por brevedad si no cambian, pero mantenemos la lógica base
+    
+    // Sort
+    filtered.sort((a,b) => (b.date || '').localeCompare(a.date || '') || (a.employeeName || '').localeCompare(b.employeeName || ''));
+    
+    if (filtered.length === 0 && this.data.length > 0) {
+      tbody.innerHTML = `<tr><td colspan="4" style="text-align:center; padding: 40px; color: var(--text-muted);">No hay fichajes que coincidan con los filtros aplicados.</td></tr>`;
+      return;
+    }
+
+    let totalWorked = 0;
+    let totalTheoretic = 0;
+    
+    filtered.forEach((row, idx) => {
+      try {
+        const worked = Number(row.workedSeconds || 0);
+        const theoretic = Number(row.theoreticSeconds || 0);
+        totalWorked += worked;
+        totalTheoretic += theoretic;
+
+        const empName = String(row.employeeName || 'Empleado');
+        const empId = String(row.employeeId || '');
+
+        // Obtener datos extendidos del empleado para hitos sociales
+        const empData = STATE.employees.find(e => String(e.id) === empId);
+        
+        const workedH = Math.floor(worked / 3600);
+        const workedM = Math.floor((worked % 3600) / 60);
+        const theoH = Math.floor(theoretic / 3600);
+        
+        // Hour Alerter
+        let alertHtml = "";
+        if (worked > 0) {
+          if (worked < theoretic * 0.95 && !row.isLive) {
+            alertHtml = '<span class="hour-alert alert-warning" title="Jornada incompleta">!</span>';
+          } else if (worked > theoretic * 1.05) {
+            alertHtml = '<span class="hour-alert alert-success" title="Horas extra">+</span>';
+          }
+        }
+
+        // --- MULTI-SEGMENT TIMELINE ---
+        const timelineSegments = (row.entries || []).map(e => {
+          if (!e.in || !e.out || e.in === "--:--" || e.out === "--:--") return "";
+          if (e.in.includes(' ')) return ""; // Safely skip "En vivo"
+          const [hIn, mIn] = e.in.split(':').map(Number);
+          const [hOut, mOut] = e.out.split(':').map(Number);
+          if (isNaN(hIn) || isNaN(hOut)) return "";
+          const start = ((hIn + (mIn||0)/60) / 24) * 100;
+          const width = (((hOut + (mOut||0)/60) - (hIn + (mIn||0)/60)) / 24) * 100;
+          return `<div class="timeline-bar ${e.type || 'work'}" style="left: ${start}%; width: ${width}%;" title="${e.typeLabel || 'Trabajo'}: ${e.in} - ${e.out}"></div>`;
+        }).join('');
+        
+        const compliancePercent = theoretic > 0 ? Math.min(100, (worked / theoretic) * 100) : (worked > 0 ? 100 : 0);
+
+        const tr = document.createElement('tr');
+        tr.className = 'row-expandable';
+        tr.innerHTML = `
+          <td class="col-employee">
+            <div class="employee-cell">
+              <div class="emp-avatar-sm clickable" onclick="event.stopPropagation(); showContactCard('${empId}')" style="${row.photoUrl ? '' : `background: linear-gradient(135deg, var(--accent), var(--accent2));`}">
+                ${row.photoUrl 
+                  ? `<img src="${row.photoUrl}" alt="${empName}" onerror="this.parentElement.innerHTML='${empName.substring(0,2).toUpperCase()}';">` 
+                  : empName.substring(0,2).toUpperCase()}
+              </div>
+              <div class="employee-info-cell">
+                <span style="font-weight: 600;">${empName}</span>
+                ${row.absenceLabel ? `<span class="badge-absence">📌 ${row.absenceLabel}</span>` : ''}
+              </div>
+              ${row.isLive ? '<span class="pulse-dot green"></span>' : ''}
+            </div>
+          </td>
+          <td class="col-date">${row.dayName || ''}</td>
+          <td class="col-hours text-center">
+             <strong>${workedH}h ${workedM}m</strong> / ${theoH}h ${alertHtml}
+          </td>
+          <td class="col-timeline"><div class="timeline-track">${timelineSegments}</div></td>
+        `;
+
+        // --- DETALLES EXPANDIBLES ---
+        const trDetails = document.createElement('tr');
+        trDetails.className = 'row-details';
+        trDetails.innerHTML = `
+          <td colspan="10">
+            <div class="details-container">
+              <div class="details-layout-split">
+                <div class="signings-table-wrapper">
+                  <table class="details-tech-table">
+                    <thead><tr><th>HORARIO</th><th>DURACIÓN</th><th>TIPO</th></tr></thead>
+                    <tbody>
+                      ${(row.entries || []).map(e => `
+                        <tr>
+                          <td><strong>${e.in} - ${e.out}</strong></td>
+                          <td>${e.duration || '--'}</td>
+                          <td><span class="signing-type-badge">${e.typeLabel || 'Trabajo'}</span></td>
+                        </tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                </div>
+                <div class="signings-stats-panel">
+                   <div class="info-title">📊 Resumen</div>
+                   <div class="stat-value">${workedH}h ${workedM}m trabajadas</div>
+                </div>
+              </div>
+            </div>
+          </td>
+        `;
+
+        tr.addEventListener('click', () => trDetails.classList.toggle('active'));
+        tbody.appendChild(tr);
+        tbody.appendChild(trDetails);
+
+      } catch (err) {
+        console.error("Error drawing row:", err);
+      }
+    });
+
+    document.getElementById('total-worked-hours').textContent = `${Math.floor(totalWorked/3600)}h ${Math.floor((totalWorked%3600)/60)}m`;
+    this.renderPresenceSummaryOnly();
+  },
+
+  renderPresenceSummaryOnly() {
+    let currentlyWorking = 0;
+    let currentlyPaused = 0;
+
+    if (this.realtimePresence && this.realtimePresence.length > 0) {
+      this.realtimePresence.forEach(p => {
+        if (p.status === 'work' || p.status === 'working') currentlyWorking++;
+        else if (p.status === 'pause' || p.status === 'paused') currentlyPaused++;
+      });
+    }
+
+    const liveEl = document.getElementById('live-presence-summary');
+    if (liveEl) {
+      if (currentlyWorking > 0 || currentlyPaused > 0) {
+        liveEl.classList.remove('hidden');
+        liveEl.style.display = 'flex'; // Asegurar visibilidad
+        document.getElementById('live-count-working').textContent = currentlyWorking;
+        document.getElementById('live-count-paused').textContent = currentlyPaused;
+      } else {
+        // En lugar de ocultar, mostramos estados a 0 si la sesión está activa
+        document.getElementById('live-count-working').textContent = '0';
+        document.getElementById('live-count-paused').textContent = '0';
+        liveEl.classList.remove('hidden'); 
+      }
+    }
+  },
+
+  populateEmployeeSelect() {
+    const select = document.getElementById('signings-employee-select');
+    if (!select) return;
+    
+    // Guardar selección actual
+    const current = select.value;
+    select.innerHTML = '<option value="all">👥 Ver a todo el equipo</option>';
+    
+    const sorted = [...STATE.employees].sort((a,b) => a.firstName.localeCompare(b.firstName));
+    sorted.forEach(emp => {
+      const opt = document.createElement('option');
+      opt.value = emp.id;
+      opt.textContent = `${emp.firstName} ${emp.lastName}`;
+      select.appendChild(opt);
+    });
+    
+    select.value = current;
+    if (select.value === "") select.value = "all";
+  },
+
+  exportToCSV() {
+    if (!this.data || this.data.length === 0) return alert("No hay datos para exportar");
+    
+    let csv = "Empleado;Fecha;Entrada;Salida;Duracion;Tipo;Localizacion\n";
+    this.data.forEach(row => {
+      row.entries.forEach(e => {
+        csv += `${row.employeeName};${row.date};${e.in};${e.out};${e.duration};${e.typeLabel};${e.loc}\n`;
+      });
+    });
+    
+    const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `fichajes_${this.currentDate.getFullYear()}_${this.currentDate.getMonth()+1}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+};
+
+/**
+ * Muestra una tarjeta de contacto premium para un empleado.
+ */
+function showContactCard(employeeId) {
+  // Comparación robusta para asegurar que encontramos al compañero
+  const emp = STATE.employees.find(e => String(e.id) === String(employeeId));
+  if (!emp) return;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'contact-card-overlay';
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  overlay.innerHTML = `
+    <div class="contact-card">
+      <div class="contact-card-header">
+        <button class="contact-card-close">×</button>
+      </div>
+      <div class="contact-card-body">
+        <div class="contact-card-avatar" style="${emp.imageProfileURL ? '' : `background: linear-gradient(135deg, var(--accent), var(--accent2));`}">
+          ${emp.imageProfileURL 
+            ? `<img src="${emp.imageProfileURL}" alt="${emp.firstName}">` 
+            : emp.firstName.substring(0,2).toUpperCase()}
+        </div>
+        <div class="contact-card-name">${emp.firstName} ${emp.lastName}</div>
+        <div class="contact-card-title">${emp.jobTitle || 'Empleado'}</div>
+        
+        <div class="contact-info-list">
+          ${emp.email ? `
+            <a href="mailto:${emp.email}" class="contact-info-item">
+              <span>📧</span>
+              <div style="flex:1">
+                <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;">Email</div>
+                <div>${emp.email}</div>
+              </div>
+            </a>
+          ` : ''}
+          ${emp.phone ? `
+            <a href="tel:${emp.phone}" class="contact-info-item">
+              <span>📱</span>
+              <div style="flex:1">
+                <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;">Teléfono</div>
+                <div>${emp.phone}</div>
+              </div>
+            </a>
+          ` : ''}
+          <div class="contact-info-item">
+            <span>🏢</span>
+            <div style="flex:1">
+              <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;">Empresa</div>
+              <div>${STATE.companies.find(c => String(c.id) === String(STATE.activeId))?.name || 'Sesame'}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hitos del Equipo: Cumpleaños y Aniversarios -->
+        <div class="contact-milestones">
+          ${emp.birthDate ? `
+            <div class="milestone-pill ${isBirthdayToday(emp.birthDate) ? 'active' : ''}">
+              <span class="milestone-icon">🎂</span>
+              <div class="milestone-text">
+                <div class="milestone-label">Cumpleaños</div>
+                <div class="milestone-value">${new Date(emp.birthDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })}</div>
+              </div>
+            </div>
+          ` : ''}
+          ${emp.hiringDate ? `
+            <div class="milestone-pill ${isAnniversaryToday(emp.hiringDate) ? 'active' : ''}">
+              <span class="milestone-icon">🎖️</span>
+              <div class="milestone-text">
+                <div class="milestone-label">Aniversario</div>
+                <div class="milestone-value">${new Date(emp.hiringDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'long' })} (${new Date().getFullYear() - new Date(emp.hiringDate).getFullYear()} años)</div>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+
+
+  document.body.appendChild(overlay);
+  overlay.querySelector('.contact-card-close').onclick = () => overlay.remove();
+}
+
