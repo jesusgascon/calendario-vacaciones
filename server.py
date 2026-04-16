@@ -296,10 +296,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         target = backend.rstrip('/') + api_path
 
         hdrs = {}
-        for h in ['Authorization', 'csid', 'Content-Type', 'Accept', 'x-company-id', 'X-Region', 'User-Agent', 'Origin', 'Referer']:
-            v = self.headers.get(h)
-            if v:
-                hdrs[h] = v
+        for h in self.headers:
+            hl = h.lower()
+            if hl in ['host', 'connection', 'content-length']:
+                continue
+            hl_allowed = hl in ['authorization', 'csid', 'content-type', 'accept', 'x-company-id', 'x-region', 'user-agent', 'origin', 'referer']
+            hl_sec = hl.startswith('sec-') or (hl.startswith('accept-') and hl != 'accept-encoding')
+            if hl_allowed or hl_sec:
+                hdrs[h] = self.headers[h]
         # Ensure we always pass a realistic User-Agent if missing, otherwise WAF blocks us
         if 'User-Agent' not in hdrs:
             hdrs['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'

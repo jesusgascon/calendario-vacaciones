@@ -207,72 +207,132 @@ body {
   flex-shrink: 0;
 }
 
-.signings-table-wrapper {
-  width: 100%;
-}
 
-.signings-technical-table {
+.details-tech-table {
   width: 100%;
-  max-width: 900px; /* Evitamos que se estire demasiado en pantallas ultra-anchas para mantener legibilidad */
   border-collapse: separate;
   border-spacing: 0;
-  background: var(--bg-card-solid);
+  background: var(--bg-card);
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid var(--border);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.15);
-  animation: fadeIn 0.4s ease-out;
-  font-size: 0.95rem;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  margin-bottom: 10px;
 }
 
-.signings-technical-table th {
-  background: var(--bg-dark);
+.details-tech-table th {
+  background: rgba(var(--text-rgb), 0.03);
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   font-weight: 800;
+  padding: 10px 15px;
   text-transform: uppercase;
-  letter-spacing: 1px;
-  padding: 12px 20px;
-  text-align: left;
+  letter-spacing: 0.5px;
   border-bottom: 1px solid var(--border);
 }
 
-.signings-technical-table td {
-  padding: 14px 20px;
+.details-tech-table td {
+  padding: 12px 15px;
   border-bottom: 1px solid var(--border-light);
   color: var(--text-primary);
-  vertical-align: middle;
+  font-size: 0.9rem;
 }
 
-.signings-technical-table tr:last-child td {
-  border-bottom: none;
+.details-tech-table tr:last-child td { border-bottom: none; }
+
+.details-tech-table tr:hover { background: rgba(var(--accent-rgb), 0.02); }
+
+.details-container {
+  padding: 20px;
+  background: rgba(var(--text-rgb), 0.01);
+  border-radius: 0 0 12px 12px;
+  border-top: 1px dashed var(--border);
+  animation: slideDownFade 0.3s ease;
 }
 
-.signings-technical-table tr:hover {
-  background: rgba(var(--accent-rgb), 0.03);
+@keyframes slideDownFade {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
-/* Estilos específicos para columnas */
-.td-time {
+
+
+.details-layout-split {
+  display: flex;
+  gap: 25px;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.signings-table-wrapper { 
+  flex: 1; /* La tabla crece todo lo posible */
+  min-width: 0; /* Evita que el flexbox se desborde */
+}
+
+
+.details-tech-table {
+  flex: 1; /* La tabla toma todo el espacio disponible */
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--bg-card);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  margin-bottom: 10px;
+}
+
+.details-tech-table th, 
+.details-tech-table td {
+  white-space: nowrap; /* PROHIBIDO PARTIR LÍNEAS */
+}
+
+
+.signings-table-wrapper { width: 100%; }
+
+.signings-stats-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  width: 250px; /* Ancho fijo para el panel lateral de stats */
+  flex-shrink: 0; /* No se encoge */
+}
+
+.signings-stats-panel .info-title {
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-width: 160px; /* Asegura espacio para el rango horario */
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
+  gap: 6px;
+}
+
+.signings-stats-panel .stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.signing-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
-.td-duration {
-  font-family: 'JetBrains Mono', 'Courier New', monospace;
-  color: var(--accent);
-  font-weight: 700;
-  min-width: 100px;
-}
+.type-work { background: rgba(34, 197, 94, 0.1); color: #22c55e; }
+.type-pause { background: rgba(245, 158, 11, 0.1); color: #f59e0b; }
+.type-abs { background: rgba(var(--accent-rgb), 0.1); color: var(--accent); }
 
-.td-loc {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
 
 /* --- Panel de Estadísticas BI --- */
 .signings-stats-panel {
@@ -2134,4 +2194,186 @@ body.kiosko-mode-active #current-month-signings {
   background: rgba(255,255,255,0.2);
   color: white;
 }
+
+
+/* 4. Contact Card V2 (Premium Modal) */
+.contact-card-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+  animation: fadeIn 0.3s ease;
+}
+
+.contact-card-v2 {
+  width: 100%;
+  max-width: 420px;
+  background: var(--bg-card);
+  border-radius: 24px;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+  border: 1px solid var(--border-light);
+}
+
+.contact-card-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background: rgba(0,0,0,0.3);
+  color: white;
+  border: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  z-index: 10;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.contact-card-close:hover {
+  background: var(--accent);
+  transform: scale(1.1);
+}
+
+.contact-card-header {
+  height: 180px;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  padding: 25px;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+}
+
+.header-avatar {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  background: white;
+  padding: 4px;
+  box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.header-avatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 17px;
+  object-fit: cover;
+}
+
+.header-text h2 {
+  margin: 0;
+  color: white;
+  font-size: 1.4rem;
+  font-weight: 700;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.header-text p {
+  margin: 4px 0 0 0;
+  color: rgba(255,255,255,0.9);
+  font-size: 0.9rem;
+}
+
+.contact-card-body {
+  padding: 25px;
+  background: var(--bg-card);
+}
+
+.body-info-grid {
+  display: grid;
+  gap: 15px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.info-value {
+  font-size: 1rem;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.info-value a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.milestones-section {
+  margin-top: 25px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-light);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.milestone-pill {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(var(--accent-rgb), 0.05);
+}
+
+.milestone-pill.active {
+  background: rgba(var(--accent-rgb), 0.15);
+  border: 1px solid rgba(var(--accent-rgb), 0.2);
+}
+
+.milestone-icon { font-size: 20px; }
+
+.milestone-text { display: flex; flex-direction: column; }
+
+.milestone-label {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.milestone-value {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.animate-pop { animation: pop 0.3s cubic-bezier(0.17, 0.67, 0.83, 0.67); }
 

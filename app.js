@@ -61,8 +61,8 @@ const STATE = {
     'absence-section': localStorage.getItem('sidebar_section_absence_collapsed') === 'true',
     'employee-section': localStorage.getItem('sidebar_section_employee_collapsed') === 'true'
   },
-  currentModule: 'vacaciones',
-  employees: []
+  currentModule: 'vacaciones'
+
 };
 
 let REFRESH_TIMER = null;
@@ -285,12 +285,10 @@ async function apiFetchBi(query) {
     'Referer': 'https://app.sesametime.com/'
   };
 
-  // Tell the local proxy which backend to forward to for BI
-  if (isLocalProxy()) {
-    headers['X-Backend-Url'] = 'https://bi-engine.sesametime.com';
-  }
+  // Deshabilitado el proxy local para evitar el WAF de Python.
+  const bypassProxyUrl = 'https://bi-engine.sesametime.com/api/v3/analytics/report-query';
 
-  const res = await fetch(`${apiBase()}${url}`, { 
+  const res = await fetch(bypassProxyUrl, { 
     method: 'POST',
     headers,
     body: JSON.stringify(query)
@@ -332,13 +330,13 @@ function upsertEmployee(emp) {
   
   STATE.allEmployees.set(idStr, updated);
   
-  // Sincronizar la lista plana para los módulos
-  STATE.employees = Array.from(STATE.allEmployees.values());
+  // El estado central es STATE.allEmployees (Map)
+
   
   // Actualizar el contador visual si existe
   const badge = document.getElementById('profiles-count-badge');
   if (badge) {
-    badge.innerHTML = `👤 Directorio: ${STATE.employees.length} perfiles`;
+    badge.innerHTML = `👤 Directorio: ${STATE.allEmployees.size} perfiles`;
     badge.style.display = 'block';
   }
 
@@ -1264,11 +1262,6 @@ async function loadInitialData() {
       upsertEmployee(emp);
     });
 
-    console.log(`[Diagnostic] Initial directory loaded: ${STATE.employees.length} profiles.`);
-
-
-
-
     // 5. Initial calendar load
     await loadDataInternal();
   } catch (e) {
@@ -1475,7 +1468,7 @@ function renderEmployeeFilterList() {
 function renderUserInfo(user) {
   if (!user) return;
   const name = `${user.firstName || ''} ${user.lastName || ''}`.trim() || user.email || 'Usuario';
-  const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
+  const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2) || '?';
 
   $('user-info').innerHTML = `
     <div class="user-avatar">
@@ -2400,10 +2393,10 @@ const FichajesModule = {
             {"field": "schedule_context_check.check_out_check_datetime", "alias": "checkOut"},
             {"field": "schedule_context_check.seconds_worked", "alias": "secondsWorked"},
             {"field": "schedule_context_check.type", "alias": "type"},
-            {"field": "schedule_context_check.check_in_latitude", "alias": "checkInLat"},
-            {"field": "schedule_context_check.check_in_longitude", "alias": "checkInLon"},
-            {"field": "schedule_context_check.check_out_latitude", "alias": "checkOutLat"},
-            {"field": "schedule_context_check.check_out_longitude", "alias": "checkOutLon"},
+            // {"field": "schedule_context_check.check_in_latitude", "alias": "checkInLat"},
+            // {"field": "schedule_context_check.check_in_longitude", "alias": "checkInLon"},
+            // {"field": "schedule_context_check.check_out_latitude", "alias": "checkOutLat"},
+            // {"field": "schedule_context_check.check_out_longitude", "alias": "checkOutLon"},
             {"field": "schedule_context_check.origin", "alias": "origin"},
             {"field": "core_context_employee.name", "alias": "employeeName"},
             {"field": "core_context_employee.id", "alias": "employeeId"}
@@ -2447,42 +2440,122 @@ const FichajesModule = {
       this.data = this.parseRealSignings(biData, localAbsences);
       console.log(`BI Data parsed: ${this.data.length} employees with activity.`);
 
-      // SUPER FALLBACK: Si no hay datos en BI, intentamos descubrir la ruta correcta de registros individuales
+      // SUPER FALLBACK: Si no hay datos en BI, pedimos los fichajes emp a emp (Nuevo API Sesame 2026)
       if (this.data.length === 0) {
-        console.warn("BI Engine failed. Starting discovery for Raw Checks...");
+        console.warn("BI Engine failed. Trying Global Search Discovery...");
         AUDIT.isSearching = true;
         try {
-          const payload = { from: start, to: end, limit: 2000 };
-          let foundPath = DISCOVERY.workingChecks;
-
-          if (!foundPath && foundPath !== 'DISABLED') {
-            foundPath = await discoverEndpoint(DISCOVERY.checksPaths, payload);
-            if (foundPath && foundPath !== 'DISABLED') {
-              DISCOVERY.workingChecks = foundPath;
-              localStorage.setItem('ssm_path_checks', foundPath);
+          // 1. Intentar Búsqueda por Estadísticas Diarias (Manager View)
+          // Este endpoint se ha descubierto en las trazas del navegador oficial y es global.
+          const searchPaths = [
+            `/api/v3/statistics/daily-computed-hour-stats?from=${start}&to=${end}`,
+            `/api/v3/work-entries/search?limit=1000&from=${start}&to=${end}`,
+            `/api/v3/attendance/work-entries/search?limit=1000&from=${start}&to=${end}`
+          ];
+          
+          let globalData = null;
+          for (const path of searchPaths) {
+            try {
+              const res = await apiFetch(path, { method: 'GET' });
+              let records = [];
+              if (res && res.data) {
+                // El endpoint de estadísticas puede venir con una estructura distinta, la normalizamos
+                records = Array.isArray(res.data) ? res.data : (res.data.items || []);
+              }
+              
+              if (records.length > 0) {
+                console.log(`✅ Global Discovery Success at ${path}: Found ${records.length} records.`);
+                globalData = records;
+                break;
+              }
+            } catch (e) {
+              console.log(`Global discovery at ${path} failed or empty.`);
             }
           }
 
-          if (foundPath && foundPath !== 'DISABLED') {
-            const rawChecks = await apiFetch(foundPath, {
-              method: 'POST',
-              body: JSON.stringify(payload)
-            });
-            const rawData = rawChecks.data || rawChecks || [];
-            
+          if (globalData) {
+             // ESTRATEGIA HÍBRIDA: Si hemos recuperado datos globales (que suelen ser resúmenes sin pausas),
+             // intentamos pedir los detalles específicos de "nuestro" usuario para no perder sus tipos/colores.
+             const myId = (STATE.me && STATE.me.id) || (window.companyConfig && window.companyConfig.employeeId);
+             if (myId) {
+                try {
+                   console.log("Hybrid Mode: Fetching personal details for timeline accuracy...");
+                   const myChecks = await apiFetch(`/api/v3/employees/${myId}/checks?from=${start}&to=${end}&includeOut=true`, { method: 'GET' });
+                   if (myChecks && myChecks.data && myChecks.data.length > 0) {
+                      // Filtramos los registros resumidos de "mí mismo" que vienen del global
+                      // y los reemplazamos por los detallados que traen pausas.
+                      const others = globalData.filter(r => String(r.employeeId || (r.employee && r.employee.id)) !== String(myId));
+                      globalData = [...others, ...myChecks.data.map(c => ({...c, employeeId: myId}))];
+                   }
+                } catch (e) {
+                   console.warn("Could not enhance personal data with details.");
+                }
+             }
+
+             this.realSignings = globalData;
+             this.data = this.parseRealSignings(globalData, localAbsences);
+             return; 
+          }
+
+          // 2. Si lo anterior falla (403/404), procedemos al fallback individual
+          console.warn("Global Discovery failed. Proceeding with individual employee audit (Slow & Self-only if not admin)...");
+
+          // Asegurarnos de tener la lista completa de IDs de la empresa
+          if (STATE.allEmployees.size <= 1) {
+             console.log("Refreshing employee list for broad search...");
+             const freshEmps = await fetchEmployees();
+             freshEmps.forEach(e => upsertEmployee(e));
+          }
+
+          let allIds = Array.from(STATE.allEmployees.keys());
+          
+          // Asegurar que estamos nosotros mismos
+          const myId = (STATE.me && STATE.me.id) || (window.companyConfig && window.companyConfig.employeeId);
+          if (myId && !allIds.includes(String(myId))) {
+             allIds.push(String(myId));
+          }
+
+          if (allIds.length === 0) {
+            console.warn("No employee IDs found for fetching checks.");
+          } else {
+            const rawData = [];
+            const targetIds = allIds.slice(0, 100);
+
+            // OPTIMIZACIÓN: No reintentar IDs que ya sabemos que dan 403 en esta sesión
+            if (!this.failedIds) this.failedIds = new Set();
+
+            for (let i = 0; i < targetIds.length; i += 8) {
+               const chunk = targetIds.slice(i, i + 8).filter(id => !this.failedIds.has(id));
+               if (chunk.length === 0) continue;
+
+               console.log(`Auditing batch of ${chunk.length} emps...`);
+               const reqs = chunk.map(id => 
+                 apiFetch(`/api/v3/employees/${id}/checks?from=${start}&to=${end}&includeOut=true`, { method: 'GET' })
+                 .then(res => ({ id, res }))
+                 .catch(err => {
+                    const msg = err.message || "";
+                    if (msg.includes('403')) {
+                       console.warn(`Permission denied for ${id}. Skipping future attempts.`);
+                       this.failedIds.add(id);
+                    }
+                    return { id, err: msg };
+                 })
+               );
+               
+               const results = await Promise.all(reqs);
+               results.forEach(({ id, res }) => {
+                 if (res && res.data && res.data.length > 0) {
+                    res.data.forEach(hit => {
+                        hit.employeeId = id;
+                        rawData.push(hit);
+                    });
+                 }
+               });
+            }
+
             if (rawData.length > 0) {
-               console.log(`Discovery match recovered ${rawData.length} raw check segments.`);
-             const mappedData = rawData.map(c => ({
-               date: (c.checkIn || c.checkOut || start).split('T')[0],
-               checkIn: c.checkIn,
-               checkOut: c.checkOut,
-               secondsWorked: c.secondsWorked || 0,
-               type: c.type || 'work',
-               origin: c.origin || 'Oficina',
-               employeeName: (c.employee ? `${c.employee.firstName} ${c.employee.lastName}` : (c.employeeName || `Empleado #${c.employeeId || '?' }`)).trim() || 'Empleado',
-               employeeId: c.employee?.id || c.employeeId
-             }));
-             this.data = this.parseRealSignings(mappedData, localAbsences);
+               console.log(`Fallback recovered ${rawData.length} raw records. Parsing...`);
+               this.data = this.parseRealSignings(rawData, localAbsences);
             }
           }
         } catch (err) {
@@ -2587,7 +2660,7 @@ const FichajesModule = {
     const current = select.value;
     select.innerHTML = '<option value="all">👥 Ver a todo el equipo</option>';
     
-    const sorted = [...STATE.employees].sort((a,b) => a.firstName.localeCompare(b.firstName));
+    const sorted = Array.from(STATE.allEmployees.values()).sort((a,b) => a.firstName.localeCompare(b.firstName));
     sorted.forEach(emp => {
       const opt = document.createElement('option');
       opt.value = emp.id;
@@ -2608,13 +2681,35 @@ const FichajesModule = {
    * @returns {Array} Listado procesado listo para renderizar.
    */
   parseRealSignings(biData, localAbsences = {}) {
-    // biData is an array of records like:
-    // { date: "2026-04-15", checkIn: "...", checkOut: "...", secondsWorked: 9766, employeeName: "...", employeeId: "..." }
+    // Normalizar datos de entrada (Soporte para múltiples formatos de Sesame 2026)
+    const normalizedData = biData.map(c => {
+      // Manejo de checkIn/Out como objetos o strings
+      const inStr = (c.checkIn && typeof c.checkIn === 'object') ? c.checkIn.date : c.checkIn;
+      const outStr = (c.checkOut && typeof c.checkOut === 'object') ? c.checkOut.date : c.checkOut;
+      
+      return {
+        ...c,
+        date: c.date || (inStr || outStr || '').split('T')[0] || '1970-01-01',
+        checkIn: inStr,
+        checkOut: outStr,
+        secondsWorked: c.secondsWorked || c.accumulatedSeconds || c.seconds || 0,
+        type: (c.checkType || c.type || c.entryType || 'work').toLowerCase(),
+        employeeName: c.employeeName || 
+                      (c.employee ? `${c.employee.firstName} ${c.employee.lastName}` : null) || 
+                      (() => {
+                        const eId = String(c.employeeId || (c.employee && c.employee.id) || c.employee_id || '');
+                        const stored = STATE.allEmployees.get(eId);
+                        return stored ? `${stored.firstName} ${stored.lastName}` : `ID ${eId}`;
+                      })(),
+        employeeId: String(c.employeeId || (c.employee && c.employee.id) || c.employee_id || '')
+      };
+    }).filter(c => c.employeeId);
+
     const out = [];
-    
     // Group them by Employee + Date
     const grouped = {};
-    for (const record of biData) {
+    for (const record of normalizedData) {
+
       const key = `${record.employeeId}_${record.date}`;
       if (!grouped[key]) {
         // Find if there's an absence for this date/employee
@@ -2747,7 +2842,7 @@ const FichajesModule = {
       
       // Recuperar la jornada teórica y datos extra del empleado
       // Comparación robusta de IDs para asegurar el cruce con el directorio
-      const emp = STATE.employees.find(e => String(e.id) === String(g.employeeId));
+      const emp = STATE.allEmployees.get(String(g.employeeId));
       
       // Forzar lectura en hora local para evitar desajustes de día de la semana
       const dObj = new Date(g.date + 'T00:00:00'); 
@@ -2782,46 +2877,7 @@ const FichajesModule = {
     }
     return out;
   },
-  
-  exportToCSV() {
-    if (!this.data.length) return alert("No hay datos para exportar");
-    
-    let csv = "\uFEFF"; // BOM para Excel
-    csv += "Empleado,Fecha,Hora Inicio,Hora Fin,Tipo,Jornada Real,Jornada Teórica\n";
-    
-    // Usamos los datos filtrados actualmente si se desea, o todos. 
-    // Por coherencia, exportaremos lo que se ve en pantalla (filtrado)
-    let filtered = this.data;
-    if (this.selectedEmployee !== 'all') {
-      filtered = filtered.filter(row => row.employeeId === this.selectedEmployee);
-    }
-    if (this.searchQuery) {
-      filtered = filtered.filter(row => row.employeeName.toLowerCase().includes(this.searchQuery));
-    }
-    
-    filtered.forEach(row => {
-      row.entries.forEach(e => {
-        csv += `"${row.employeeName}","${row.date}","${e.in}","${e.out}","${e.typeLabel}","",""\n`;
-      });
-      const h = Math.floor(row.workedSeconds / 3600);
-      const m = Math.floor((row.workedSeconds % 3600) / 60);
-      const theoH = Math.floor(row.theoreticSeconds / 3600);
-      const theoM = Math.floor((row.theoreticSeconds % 3600) / 60);
-      csv += `"${row.employeeName}","${row.date}","","","TOTAL JORNADA","${h}h ${m}m","${theoH}h ${theoM}m"\n`;
-    });
-    
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `fichajes_sesame_${new Date().toISOString().split('T')[0]}.csv`);
-    link.style.visibility = 'hidden';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  },
 
-  
   /**
    * Renderiza la tabla de fichajes y el resumen de horas en la interfaz.
    * Aplica filtros de búsqueda y selección de empleado en tiempo real.
@@ -2842,9 +2898,7 @@ const FichajesModule = {
       filtered = filtered.filter(row => String(row.employeeName || '').toLowerCase().includes(q));
     }
 
-    // Filtros de fecha y presencia omitidos por brevedad si no cambian, pero mantenemos la lógica base
-    
-    // Sort
+    // Sort: Las más recientes primero
     filtered.sort((a,b) => (b.date || '').localeCompare(a.date || '') || (a.employeeName || '').localeCompare(b.employeeName || ''));
     
     if (filtered.length === 0 && this.data.length > 0) {
@@ -2865,14 +2919,10 @@ const FichajesModule = {
         const empName = String(row.employeeName || 'Empleado');
         const empId = String(row.employeeId || '');
 
-        // Obtener datos extendidos del empleado para hitos sociales
-        const empData = STATE.employees.find(e => String(e.id) === empId);
-        
         const workedH = Math.floor(worked / 3600);
         const workedM = Math.floor((worked % 3600) / 60);
         const theoH = Math.floor(theoretic / 3600);
         
-        // Hour Alerter
         let alertHtml = "";
         if (worked > 0) {
           if (worked < theoretic * 0.95 && !row.isLive) {
@@ -2885,7 +2935,7 @@ const FichajesModule = {
         // --- MULTI-SEGMENT TIMELINE ---
         const timelineSegments = (row.entries || []).map(e => {
           if (!e.in || !e.out || e.in === "--:--" || e.out === "--:--") return "";
-          if (e.in.includes(' ')) return ""; // Safely skip "En vivo"
+          if (e.in.includes(' ')) return ""; 
           const [hIn, mIn] = e.in.split(':').map(Number);
           const [hOut, mOut] = e.out.split(':').map(Number);
           if (isNaN(hIn) || isNaN(hOut)) return "";
@@ -2894,8 +2944,6 @@ const FichajesModule = {
           return `<div class="timeline-bar ${e.type || 'work'}" style="left: ${start}%; width: ${width}%;" title="${e.typeLabel || 'Trabajo'}: ${e.in} - ${e.out}"></div>`;
         }).join('');
         
-        const compliancePercent = theoretic > 0 ? Math.min(100, (worked / theoretic) * 100) : (worked > 0 ? 100 : 0);
-
         const tr = document.createElement('tr');
         tr.className = 'row-expandable';
         tr.innerHTML = `
@@ -2920,7 +2968,6 @@ const FichajesModule = {
           <td class="col-timeline"><div class="timeline-track">${timelineSegments}</div></td>
         `;
 
-        // --- DETALLES EXPANDIBLES ---
         const trDetails = document.createElement('tr');
         trDetails.className = 'row-details';
         trDetails.innerHTML = `
@@ -2931,19 +2978,28 @@ const FichajesModule = {
                   <table class="details-tech-table">
                     <thead><tr><th>HORARIO</th><th>DURACIÓN</th><th>TIPO</th></tr></thead>
                     <tbody>
-                      ${(row.entries || []).map(e => `
+                      ${(row.entries || []).map(e => {
+                        const icon = e.type === 'work' ? '💼' : (e.type === 'pause' ? '☕' : '🚪');
+                        const typeCls = e.type === 'work' ? 'type-work' : (e.type === 'pause' ? 'type-pause' : 'type-abs');
+                        return `
                         <tr>
                           <td><strong>${e.in} - ${e.out}</strong></td>
-                          <td>${e.duration || '--'}</td>
-                          <td><span class="signing-type-badge">${e.typeLabel || 'Trabajo'}</span></td>
-                        </tr>
-                      `).join('')}
+                          <td><span class="td-duration">${e.duration || '--'}</span></td>
+                          <td><span class="signing-type-badge ${typeCls}">${icon} ${e.typeLabel || 'Trabajo'}</span></td>
+                        </tr>`;
+                      }).join('')}
                     </tbody>
                   </table>
                 </div>
                 <div class="signings-stats-panel">
-                   <div class="info-title">📊 Resumen</div>
-                   <div class="stat-value">${workedH}h ${workedM}m trabajadas</div>
+                   <div class="info-title">📊 Resumen de Jornada</div>
+                   <div class="stat-value">${workedH}h ${workedM}m</div>
+                   <div class="stat-subtext">Total trabajado en este día</div>
+                   
+                   ${row.absenceLabel ? `
+                   <div class="info-title">📌 Nota</div>
+                   <div class="stat-subtext" style="color:var(--accent)">${row.absenceLabel}</div>
+                   ` : ''}
                 </div>
               </div>
             </div>
@@ -2959,7 +3015,8 @@ const FichajesModule = {
       }
     });
 
-    document.getElementById('total-worked-hours').textContent = `${Math.floor(totalWorked/3600)}h ${Math.floor((totalWorked%3600)/60)}m`;
+    const totalEl = document.getElementById('total-worked-hours');
+    if (totalEl) totalEl.textContent = `${Math.floor(totalWorked/3600)}h ${Math.floor((totalWorked%3600)/60)}m`;
     this.renderPresenceSummaryOnly();
   },
 
@@ -2976,87 +3033,56 @@ const FichajesModule = {
 
     const liveEl = document.getElementById('live-presence-summary');
     if (liveEl) {
-      if (currentlyWorking > 0 || currentlyPaused > 0) {
-        liveEl.classList.remove('hidden');
-        liveEl.style.display = 'flex'; // Asegurar visibilidad
-        document.getElementById('live-count-working').textContent = currentlyWorking;
-        document.getElementById('live-count-paused').textContent = currentlyPaused;
-      } else {
-        // En lugar de ocultar, mostramos estados a 0 si la sesión está activa
-        document.getElementById('live-count-working').textContent = '0';
-        document.getElementById('live-count-paused').textContent = '0';
-        liveEl.classList.remove('hidden'); 
-      }
+      liveEl.style.display = (currentlyWorking > 0 || currentlyPaused > 0) ? 'flex' : 'none';
+      const wEl = document.getElementById('live-count-working');
+      const pEl = document.getElementById('live-count-paused');
+      if (wEl) wEl.textContent = currentlyWorking;
+      if (pEl) pEl.textContent = currentlyPaused;
     }
-  },
-
-  populateEmployeeSelect() {
-    const select = document.getElementById('signings-employee-select');
-    if (!select) return;
-    
-    // Guardar selección actual
-    const current = select.value;
-    select.innerHTML = '<option value="all">👥 Ver a todo el equipo</option>';
-    
-    const sorted = [...STATE.employees].sort((a,b) => a.firstName.localeCompare(b.firstName));
-    sorted.forEach(emp => {
-      const opt = document.createElement('option');
-      opt.value = emp.id;
-      opt.textContent = `${emp.firstName} ${emp.lastName}`;
-      select.appendChild(opt);
-    });
-    
-    select.value = current;
-    if (select.value === "") select.value = "all";
   },
 
   exportToCSV() {
     if (!this.data || this.data.length === 0) return alert("No hay datos para exportar");
-    
     let csv = "Empleado;Fecha;Entrada;Salida;Duracion;Tipo;Localizacion\n";
     this.data.forEach(row => {
       row.entries.forEach(e => {
         csv += `${row.employeeName};${row.date};${e.in};${e.out};${e.duration};${e.typeLabel};${e.loc}\n`;
       });
     });
-    
-    const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `fichajes_${this.currentDate.getFullYear()}_${this.currentDate.getMonth()+1}.csv`);
-    document.body.appendChild(link);
+    link.href = url;
+    link.download = `fichajes_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
-    document.body.removeChild(link);
   }
 };
 
 /**
- * Muestra una tarjeta de contacto premium para un empleado.
+ * Muestra la ficha de contacto de un empleado al hacer clic en su avatar.
+ * @param {string} employeeId - ID del empleado a mostrar.
  */
 function showContactCard(employeeId) {
-  // Comparación robusta para asegurar que encontramos al compañero
-  const emp = STATE.employees.find(e => String(e.id) === String(employeeId));
+  const emp = STATE.allEmployees.get(String(employeeId));
   if (!emp) return;
 
   const overlay = document.createElement('div');
   overlay.className = 'contact-card-overlay';
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-
   overlay.innerHTML = `
-    <div class="contact-card">
-      <div class="contact-card-header">
-        <button class="contact-card-close">×</button>
+    <div class="contact-card-v2 animate-pop">
+      <button class="contact-card-close">&times;</button>
+      <div class="contact-card-header" style="background: linear-gradient(135deg, var(--accent), var(--accent2))">
+        <div class="header-content">
+          <div class="header-avatar">
+            ${emp.imageProfileURL ? `<img src="${emp.imageProfileURL}" alt="${emp.firstName}">` : emp.firstName.substring(0,2).toUpperCase()}
+          </div>
+          <div class="header-text">
+            <h2>${emp.firstName} ${emp.lastName}</h2>
+            <p>${emp.jobTitle || 'Empleado'}</p>
+          </div>
+        </div>
       </div>
       <div class="contact-card-body">
-        <div class="contact-card-avatar" style="${emp.imageProfileURL ? '' : `background: linear-gradient(135deg, var(--accent), var(--accent2));`}">
-          ${emp.imageProfileURL 
-            ? `<img src="${emp.imageProfileURL}" alt="${emp.firstName}">` 
-            : emp.firstName.substring(0,2).toUpperCase()}
-        </div>
-        <div class="contact-card-name">${emp.firstName} ${emp.lastName}</div>
-        <div class="contact-card-title">${emp.jobTitle || 'Empleado'}</div>
-        
         <div class="contact-info-list">
           ${emp.email ? `
             <a href="mailto:${emp.email}" class="contact-info-item">
@@ -3114,4 +3140,3 @@ function showContactCard(employeeId) {
   document.body.appendChild(overlay);
   overlay.querySelector('.contact-card-close').onclick = () => overlay.remove();
 }
-
