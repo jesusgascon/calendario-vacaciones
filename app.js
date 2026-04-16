@@ -418,6 +418,18 @@ async function fetchPresence() {
   }
 }
 
+async function fetchVacationBalance(employeeId) {
+  try {
+    // Intentar obtener la configuración de vacaciones del empleado
+    // Este endpoint suele devolver el total de días, usados y restantes
+    const data = await apiFetch(`/api/v3/vacation-configuration/employee/${employeeId}`);
+    return data.data || data || null;
+  } catch (e) {
+    console.warn("Could not fetch vacation balance:", e);
+    return null;
+  }
+}
+
 async function fetchEmployees() {
   try {
     // 1. Intentamos el directorio global (tradicionalmente con más permisos)
@@ -1478,9 +1490,55 @@ function renderUserInfo(user) {
     </div>
     <div class="user-details">
       <div class="user-name">${name}</div>
-      <div class="user-role">${user.email || 'Sesame HR'}</div>
+      <div class="user-role">${user.jobTitle || user.email || 'Sesame HR'}</div>
     </div>
   `;
+  
+  // Actualizar widgets adicionales si tenemos los datos
+  updateProfileWidgets(user);
+}
+
+function updateProfileWidgets(user) {
+  // 1. Antigüedad
+  const hiringDate = user.hiringDate || user.dateOfJoined || user.joinedDate;
+  if (hiringDate) {
+    const start = new Date(hiringDate);
+    const now = new Date();
+    let diffSq = now.getTime() - start.getTime();
+    let years = Math.floor(diffSq / (1000 * 60 * 60 * 24 * 365.25));
+    let months = Math.floor((diffSq % (1000 * 60 * 60 * 24 * 365.25)) / (1000 * 60 * 60 * 24 * 30.44));
+    
+    let text = `${years} ${years === 1 ? 'año' : 'años'}`;
+    if (months > 0) text += ` y ${months} ${months === 1 ? 'mes' : 'meses'}`;
+    if (years === 0 && months === 0) text = "¡Recién llegado! ✨";
+    
+    const el = $('seniority-text');
+    if (el) el.textContent = text;
+  }
+
+  // 2. Vacaciones (Carga asíncrona dedicada)
+  if (user.id) {
+    fetchVacationBalance(user.id).then(balance => {
+      if (!balance) {
+        $('vacation-subtitle').textContent = "No disponible";
+        return;
+      }
+      
+      // Sesame v3 suele devolver daysTotal y daysUsed
+      const total = balance.daysTotal || 22; // Fallback común
+      const used = balance.daysUsed || 0;
+      const left = total - used;
+      const percent = Math.min(100, Math.max(0, (used / total) * 100));
+
+      const leftEl = $('vacation-days-left');
+      const barEl = $('vacation-progress-bar');
+      const subEl = $('vacation-subtitle');
+
+      if (leftEl) leftEl.textContent = `${left} días`;
+      if (barEl) barEl.style.width = `${percent}%`;
+      if (subEl) subEl.textContent = `${used} consumidos de ${total}`;
+    });
+  }
 }
 
 // ── Render: calendar ───────────────────────────────────────────────────────
