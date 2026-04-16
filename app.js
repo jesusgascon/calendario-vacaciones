@@ -420,21 +420,56 @@ async function fetchPresence() {
 
 async function fetchVacationBalance(employeeId) {
   try {
-    // Intentar múltiples endpoints para asegurar la obtención del balance
-    const paths = [
+    // 1. Intentar endpoints oficiales primero (requieren más permisos)
+    const officialPaths = [
       `/api/v3/vacation-configuration/employee/${employeeId}`,
-      `/api/v3/vacation-calendars/employee/${employeeId}`,
       `/api/v3/statistics/employee/${employeeId}/vacations`
     ];
 
-    for (const path of paths) {
+    for (const path of officialPaths) {
       try {
         const data = await apiFetch(path);
         const balance = data.data || data;
         if (balance && (balance.daysTotal || balance.totalDays)) return balance;
       } catch (e) {}
     }
-    return null;
+
+    // 2. FALLBACK INTELIGENTE: Auto-cálculo basado en el calendario real
+    // Si la API restringe el acceso al balance, contamos nosotros mismos los días del año
+    console.log("Vacation Balance: Official API restricted. Switching to Smart Calendar Scan...");
+    
+    const currentYear = new Date().getFullYear();
+    const from = `${currentYear}-01-01`;
+    const to = `${currentYear}-12-31`;
+    
+    // Necesitamos saber qué IDs de tipo corresponden a "Vacaciones"
+    // Buscamos en los tipos de ausencia ya cargados
+    const vacationType = STATE.absenceTypes.find(t => 
+      t.name.toLowerCase().includes('vacac')
+    );
+    
+    if (!vacationType) return null;
+
+    // Consultamos el calendario agrupado para todo el año (solo nuestro ID)
+    const rawData = await apiFetch(`/api/v3/companies/${STATE.companyId}/calendars-grouped`, {
+      from, to, view: 'employee'
+    });
+    
+    const entries = rawData.data || rawData || [];
+    let usedDays = 0;
+    
+    entries.forEach(day => {
+      const types = day.calendar_types || [];
+      const hasVacation = types.some(ct => ct.calendar_type?.id === vacationType.id);
+      if (hasVacation) usedDays++;
+    });
+
+    return {
+      daysUsed: usedDays,
+      daysTotal: 22, // Estándar por defecto si no podemos leer el oficial
+      isAutocalculated: true
+    };
+
   } catch (e) {
     console.warn("Could not fetch vacation balance:", e);
     return null;
@@ -1536,8 +1571,12 @@ function updateProfileWidgets(user) {
   // 2. Vacaciones (Carga asíncrona dedicada)
   if (user.id) {
     fetchVacationBalance(user.id).then(balance => {
+      const subEl = $('vacation-subtitle');
+      const leftEl = $('vacation-days-left');
+      const barEl = $('vacation-progress-bar');
+
       if (!balance) {
-        $('vacation-subtitle').textContent = "Consulta restringida";
+        if (subEl) subEl.textContent = "Consulta restringida";
         return;
       }
       
@@ -1546,13 +1585,15 @@ function updateProfileWidgets(user) {
       const left = total - used;
       const percent = Math.min(100, Math.max(0, (used / total) * 100));
 
-      const leftEl = $('vacation-days-left');
-      const barEl = $('vacation-progress-bar');
-      const subEl = $('vacation-subtitle');
-
       if (leftEl) leftEl.textContent = `${left} días`;
       if (barEl) barEl.style.width = `${percent}%`;
-      if (subEl) subEl.textContent = `${used} consumidos de ${total}`;
+      
+      if (subEl) {
+        let label = `${used} consumidos de ${total}`;
+        if (balance.isAutocalculated) label += " (Auto)";
+        subEl.textContent = label;
+        subEl.title = balance.isAutocalculated ? "Calculado escaneando tu calendario anual" : "Dato oficial de Sesame HR";
+      }
     });
   }
 }
