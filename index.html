@@ -241,6 +241,33 @@
               <span class="seniority-val" id="seniority-text">-- años</span>
             </div>
           </div>
+          
+          <!-- Nuevo: Widget Patrones -->
+          <div id="patterns-widget" class="profile-widget glass-sm mt-10" style="display:none;">
+            <div class="widget-header">
+              <span class="widget-title">Mis Patrones (Semana)</span>
+            </div>
+            <div style="font-size: 0.8rem; margin-top: 12px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span style="color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;">Hora Media Entrada</span>
+                <span id="pattern-avg-in" style="font-weight: 600; font-size: 0.9rem; color: var(--text-main);">--:--</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <span style="color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;">Jornada más larga</span>
+                <span id="pattern-max-day" style="font-weight: 500; color: var(--text-main);">--</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Nuevo: Widget Radar -->
+          <div id="radar-widget" class="profile-widget glass-sm mt-10" style="display:none;">
+            <div class="widget-header" style="margin-bottom: 8px;">
+              <span class="widget-title">Radar de Disponibilidad</span>
+            </div>
+            <div id="radar-list" style="display: flex; flex-direction: column; gap: 8px;">
+              <!-- Se rellena por JS -->
+            </div>
+          </div>
         </div>
       </div>
 
