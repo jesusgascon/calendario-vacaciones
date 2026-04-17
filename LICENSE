@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) 2026 Jesús
+Copyright (c) 2026 Jesús / Sesame Premium Dashboard Team
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,3 +19,28 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+==============================================================================
+ANEXO A: EXENCIÓN DE RESPONSABILIDAD SOBRE PLATAFORMAS DE TERCEROS
+==============================================================================
+
+Este software ("Sesame Premium Dashboard") es una herramienta independiente y 
+no está afiliado, avalado, patrocinado ni directamente soportado por Sesame HR 
+ni por Artvisual S.L. 
+
+1. Naturaleza del Proxy y Operaciones: El software funciona como un analizador 
+   y visor de las cabeceras HTTP y endpoints REST/Web pertenecientes a Sesame.
+2. Responsabilidad de la Identidad: Todo Bearer Token, Cookie USID o identificador 
+   (CSID) que el usuario final de este software decida depositar en el entorno de 
+   ejecución local es de su exclusiva responsabilidad moral, legal e informática.
+3. Uso Aceptable (AUP): Queda estrictamente desaconsejado, bajo este anclaje 
+   moral de licencia, abusar del caudal de red, modificar o eludir firewalls (WAF) 
+   con el fin último de denegar servicio (DDoS) al proveedor original.
+4. Extinción de Fiabilidad: Si las estructuras del JSON de retorno desde los 
+   servicios terceros varían, este software dejará de operar total o pacialmente. 
+   El grupo autor (Jesús) descarta explícitamente el compromiso legal de actualizar, 
+   remendar o proveer asistencia permanente a dicho suceso fortuito.
+
+Ninguna filial legal originaria de Sesame HR puede ser demandada por fallas o 
+filtraciones que ocurran **puramente** dentro de la jurisdicción técnica de esta 
+herramienta cliente (tu propio pc o instancia en red local).
