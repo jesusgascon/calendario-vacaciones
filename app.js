@@ -3157,16 +3157,10 @@ const FichajesModule = {
        tbody.appendChild(warningRow);
     }
     
-    let filtered = this.data || [];
-    if (this.selectedEmployee && this.selectedEmployee !== 'all') {
-      const targetId = String(this.selectedEmployee);
-      filtered = filtered.filter(row => String(row.employeeId) === targetId);
-    }
+    let filtered = this.getFilteredRows();
     
-    if (this.searchQuery) {
-      const q = String(this.searchQuery).toLowerCase();
-      filtered = filtered.filter(row => String(row.employeeName || '').toLowerCase().includes(q));
-    }
+    // Refresh insights whenever the table filters update
+    this.renderOperationalInsights();
 
     // Sort: Las más recientes primero
     filtered.sort((a,b) => (b.date || '').localeCompare(a.date || '') || (a.employeeName || '').localeCompare(b.employeeName || ''));
@@ -3330,6 +3324,183 @@ const FichajesModule = {
     link.href = url;
     link.download = `fichajes_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
+  },
+
+  formatDurationCompact(seconds) {
+    const safe = Number(seconds || 0);
+    const h = Math.floor(safe / 3600);
+    const m = Math.floor((safe % 3600) / 60);
+    return `${h}h ${m}m`;
+  },
+
+  getFilteredRows() {
+    let filtered = [...(this.data || [])];
+
+    if (this.selectedEmployee && this.selectedEmployee !== 'all') {
+      const targetId = String(this.selectedEmployee);
+      filtered = filtered.filter(row => String(row.employeeId) === targetId);
+    }
+
+    if (this.searchQuery) {
+      const q = String(this.searchQuery).toLowerCase();
+      filtered = filtered.filter(row => String(row.employeeName || '').toLowerCase().includes(q));
+    }
+
+    if (this.presenceFilter && this.presenceFilter !== 'all') {
+      filtered = filtered.filter(row => {
+        const presence = (this.realtimePresence || []).find(p => String(p.employeeId) === String(row.employeeId));
+        if (!presence) return false;
+        const status = String(presence.status || '').toLowerCase();
+        return this.presenceFilter === 'working'
+          ? (status === 'work' || status === 'working')
+          : (status === 'pause' || status === 'paused');
+      });
+    }
+
+    return filtered;
+  },
+
+  buildUpcomingAbsenceItems() {
+    const today = new Date();
+    const maxDate = new Date();
+    maxDate.setDate(maxDate.getDate() + 14);
+    const rows = [];
+
+    Object.entries(STATE.calendarData || {})
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([date, entries]) => {
+        const d = new Date(`${date}T00:00:00`);
+        if (d < new Date(today.toDateString()) || d > maxDate) return;
+
+        entries.forEach(entry => {
+          (entry.employees || []).forEach(emp => {
+            const empId = String(emp.id);
+            const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim();
+
+            if (STATE.hiddenEmployeeIds.has(empId)) return;
+            if (this.selectedEmployee && this.selectedEmployee !== 'all' && String(this.selectedEmployee) !== empId) return;
+            if (this.searchQuery && !name.toLowerCase().includes(this.searchQuery)) return;
+
+            rows.push({
+              date,
+              employeeName: name || 'Empleado',
+              typeName: entry.type?.name || 'Ausencia'
+            });
+          });
+        });
+      });
+
+    return rows.slice(0, 4);
+  },
+
+  renderOperationalInsights() {
+    const rows = this.getFilteredRows();
+    const incidents = [];
+    const validations = [];
+    const anomalies = [];
+
+    rows.forEach(row => {
+      const missingCheckout = (row.entries || []).some(e => e.out === '--:--') && !row.isLive;
+      const underworked = row.theoreticSeconds > 0 && row.workedSeconds < row.theoreticSeconds * 0.95 && !row.absenceLabel && !row.isLive;
+      const overtime = row.theoreticSeconds > 0 && row.workedSeconds > row.theoreticSeconds * 1.15;
+      const fragmented = (row.entries || []).length >= 4;
+      const absenceConflict = !!row.absenceLabel && row.workedSeconds > 0;
+
+      if (missingCheckout) {
+        incidents.push({ label: 'Salida no registrada', employeeName: row.employeeName, meta: row.dayName });
+        validations.push({ label: 'Revisar cierre de jornada', employeeName: row.employeeName, meta: row.dayName });
+      }
+      if (underworked) {
+        incidents.push({ label: 'Jornada incompleta', employeeName: row.employeeName, meta: this.formatDurationCompact(row.workedSeconds) });
+      }
+      if (overtime) {
+        incidents.push({ label: 'Posibles horas extra', employeeName: row.employeeName, meta: this.formatDurationCompact(row.workedSeconds) });
+      }
+      if (fragmented) {
+        anomalies.push({ label: 'Día muy fragmentado', employeeName: row.employeeName, meta: `${row.entries.length} tramos` });
+        validations.push({ label: 'Validar múltiples tramos', employeeName: row.employeeName, meta: row.dayName });
+      }
+      if (absenceConflict) {
+        anomalies.push({ label: 'Ausencia con actividad', employeeName: row.employeeName, meta: row.absenceLabel });
+        validations.push({ label: 'Cruce ausencia/fichaje', employeeName: row.employeeName, meta: row.dayName });
+      }
+    });
+
+    const upcoming = this.buildUpcomingAbsenceItems();
+    const complianceBase = rows.filter(r => r.theoreticSeconds > 0);
+    const compliancePct = complianceBase.length
+      ? Math.round(complianceBase.reduce((acc, row) => acc + Math.min(100, Math.round((row.workedSeconds / row.theoreticSeconds) * 100)), 0) / complianceBase.length)
+      : 0;
+    const liveCount = (this.realtimePresence || []).filter(p => ['work', 'working', 'pause', 'paused'].includes(String(p.status || '').toLowerCase())).length;
+
+    const setBadge = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    };
+
+    const setBody = (id, html) => {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = html;
+    };
+
+    setBadge('insight-incidencias-count', incidents.length);
+    setBadge('insight-validaciones-count', validations.length);
+    setBadge('insight-anomalias-count', anomalies.length);
+    setBadge('insight-solicitudes-count', upcoming.length);
+
+    setBody('insight-incidencias-body', incidents.length ? `
+      ${incidents.slice(0, 4).map(item => `
+        <div class="insight-line">
+          <div><strong>${item.label}</strong><br><span>${item.employeeName}</span></div>
+          <span class="insight-tag warning">${item.meta}</span>
+        </div>
+      `).join('')}
+      <div class="insight-note">Bloque orientado a incidencias oficiales de time tracking. Ahora mismo se alimenta de reglas sobre los fichajes ya visibles.</div>
+    ` : `<div class="insight-empty">No se detectaron incidencias operativas en el rango actual.</div>`);
+
+    setBody('insight-validaciones-body', validations.length ? `
+      ${validations.slice(0, 4).map(item => `
+        <div class="insight-line">
+          <div><strong>${item.label}</strong><br><span>${item.employeeName}</span></div>
+          <span class="insight-tag danger">${item.meta}</span>
+        </div>
+      `).join('')}
+      <div class="insight-note">Este bloque encaja con validaciones e incidencias oficiales cuando el token tenga alcance suficiente de equipo.</div>
+    ` : `<div class="insight-empty">No hay validaciones sugeridas con los datos actuales.</div>`);
+
+    setBody('insight-anomalias-body', `
+      <div class="insight-kpi">
+        <div class="insight-kpi-item">
+          <span class="label">Cumplimiento</span>
+          <span class="value">${compliancePct}%</span>
+        </div>
+        <div class="insight-kpi-item">
+          <span class="label">En vivo</span>
+          <span class="value">${liveCount}</span>
+        </div>
+        <div class="insight-kpi-item">
+          <span class="label">Fragmentados</span>
+          <span class="value">${anomalies.filter(a => a.label === 'Día muy fragmentado').length}</span>
+        </div>
+        <div class="insight-kpi-item">
+          <span class="label">Cruces</span>
+          <span class="value">${anomalies.filter(a => a.label === 'Ausencia con actividad').length}</span>
+        </div>
+      </div>
+      ${anomalies.length ? `
+        <div class="insight-note">Anomalías destacadas: ${anomalies.slice(0, 2).map(a => `${a.employeeName} (${a.label})`).join(' · ')}</div>
+      ` : `<div class="insight-note">Sin anomalías fuertes en el rango filtrado.</div>`}
+    `);
+
+    setBody('insight-solicitudes-body', upcoming.length ? `
+      ${upcoming.map(item => `
+        <div class="insight-line">
+          <div><strong>${item.employeeName}</strong><br><span>${item.typeName}</span></div>
+          <span class="insight-tag success">${item.date}</span>
+        </div>
+      `).join('')}
+      <div class="insight-note">Vista basada en ausencias ya calendarizadas. Encaja con request/v1 cuando se conecten solicitudes oficiales.</div>
+    ` : `<div class="insight-empty">No hay ausencias próximas visibles en los próximos 14 días con los filtros actuales.</div>`);
   }
 };
 
