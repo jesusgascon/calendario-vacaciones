@@ -321,9 +321,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             hl = h.lower()
             if hl in ['host', 'connection', 'content-length']:
                 continue
-            hl_allowed = hl in ['authorization', 'csid', 'content-type', 'accept', 'x-company-id', 'x-region', 'user-agent', 'origin', 'referer']
+            hl_allowed = hl in ['authorization', 'csid', 'content-type', 'accept', 'user-agent', 'origin', 'referer']
             hl_sec = hl.startswith('sec-') or (hl.startswith('accept-') and hl != 'accept-encoding')
-            if hl_allowed or hl_sec:
+            hl_x = hl.startswith('x-')
+            if hl_allowed or hl_sec or hl_x:
                 hdrs[h] = self.headers[h]
         
         # Log de contexto para depuración de 403/404

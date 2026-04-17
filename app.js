@@ -61,8 +61,8 @@ const STATE = {
     'absence-section': localStorage.getItem('sidebar_section_absence_collapsed') === 'true',
     'employee-section': localStorage.getItem('sidebar_section_employee_collapsed') === 'true'
   },
-  currentModule: 'vacaciones'
-
+  currentModule: 'vacaciones',
+  presenceMap: new Map() // employeeId -> status ('work', 'pause', 'out')
 };
 
 let REFRESH_TIMER = null;
@@ -160,9 +160,6 @@ async function discoverEndpoint(candidates, payload = null) {
     
     for (const method of methodsToTry) {
       try {
-        console.log(`Deep Discovery: Testing ${method} ${path}...`);
-        
-        // Si es GET, convertimos el payload en query params si existe
         let finalPath = path;
         let body = null;
         
@@ -175,7 +172,6 @@ async function discoverEndpoint(candidates, payload = null) {
 
         const res = await apiFetch(finalPath, { method, body });
         // Si no dio error, hemos encontrado la ruta
-        console.log(`Deep Discovery: SUCCESS! -> ${method} ${finalPath}`);
         return finalPath; 
       } catch (e) {
         console.warn(`Deep Discovery: Failed ${method} ${path}: ${e.message}`);
@@ -184,9 +180,7 @@ async function discoverEndpoint(candidates, payload = null) {
     }
   }
   
-  // CIRCUIT BREAKER: Si todo falla, marcamos ambos como injaqueables.
-  // Usamos la longitud del array para discriminar el tipo (no includes() que es frágil).
-  console.error("Deep Discovery: Todos los endpoints fallaron. Funcionalidad deshabilitada.");
+  // Si todo falla, marcamos ambos como desactivados para evitar reintentos infinitos
   if (candidates === DISCOVERY.presencePaths || candidates.length === DISCOVERY.presencePaths.length) {
       DISCOVERY.workingPresence = 'DISABLED';
       localStorage.setItem('ssm_path_presence', 'DISABLED');
@@ -272,8 +266,6 @@ async function apiFetch(path, params = {}, isRetry = false) {
         throw new Error("Sesión caducada (401). Por favor vuelve a conectar.");
       }
       
-      // MIGRATION AUDIT: Intentar capturar el cuerpo del error de Sesame para diagnóstico
-      let serverDetail = "";
       try {
         const errorJson = await res.json();
         serverDetail = `: ${JSON.stringify(errorJson)}`;
@@ -346,14 +338,9 @@ function upsertEmployee(emp) {
                 (emp.contract && emp.contract.startAt) || existing.hiringDate || ''
   };
 
-  // MEJORA AGRESIVA DE FOTOS: Buscamos en todos los campos posibles de Sesame
+  // Enriquecer foto si está disponible
   const photo = emp.imageProfileURL || emp.imageProfile || emp.photoUrl || emp.photo || emp.avatarUrl || emp.avatar || '';
-  
-  if (!photo && existing.imageProfileURL) {
-    updated.imageProfileURL = existing.imageProfileURL;
-  } else {
-    updated.imageProfileURL = photo;
-  }
+  updated.imageProfileURL = photo || existing.imageProfileURL || '';
   
   STATE.allEmployees.set(idStr, updated);
   
@@ -417,26 +404,31 @@ async function fetchCalendarGrouped(from, to, typeIds) {
 
 async function fetchPresence() {
   try {
-    // 1. Si ya conocemos el camino
-    if (DISCOVERY.workingPresence === 'DISABLED') {
-        return [];
-    }
+    if (DISCOVERY.workingPresence === 'DISABLED') return [];
+    
+    let list = [];
     if (DISCOVERY.workingPresence) {
       AUDIT.lastPresencePathTried = DISCOVERY.workingPresence;
       const data = await apiFetch(DISCOVERY.workingPresence);
-      return data.data || data || [];
+      list = data.data || data || [];
+    } else {
+      AUDIT.isSearching = true;
+      const found = await discoverEndpoint(DISCOVERY.presencePaths);
+      if (found) {
+        DISCOVERY.workingPresence = found;
+        localStorage.setItem('ssm_path_presence', found);
+        return fetchPresence(); 
+      }
     }
 
-    // 2. Si no, iniciar descubrimiento
-    AUDIT.isSearching = true;
-    const found = await discoverEndpoint(DISCOVERY.presencePaths);
-    if (found) {
-      DISCOVERY.workingPresence = found;
-      localStorage.setItem('ssm_path_presence', found);
-      return fetchPresence(); // Reintentar con la ruta guardada
+    // Actualizar el mapa global de presencia para acceso O(1)
+    if (Array.isArray(list)) {
+      list.forEach(p => {
+        if (p.employeeId) STATE.presenceMap.set(String(p.employeeId), p.status || 'out');
+        else if (p.employee && p.employee.id) STATE.presenceMap.set(String(p.employee.id), p.status || 'out');
+      });
     }
-    
-    return [];
+    return list;
   } catch (e) {
     console.warn("Could not fetch presence data:", e);
     return [];
@@ -484,23 +476,17 @@ async function fetchVacationBalance(employeeId) {
       localStorage.setItem('ssm_path_balance', 'DISABLED');
     }
 
-    // 2. FALLBACK INTELIGENTE: Auto-cálculo basado en el calendario real
-    // Si la API restringe el acceso al balance, contamos nosotros mismos los días del año
-    console.log("Vacation Balance: Official API restricted. Switching to Smart Calendar Scan...");
-    
     const currentYear = new Date().getFullYear();
     const from = `${currentYear}-01-01`;
     const to = `${currentYear}-12-31`;
     
-    // Necesitamos saber qué IDs de tipo corresponden a "Vacaciones"
-    // Buscamos en los tipos de ausencia ya cargados
     const vacationType = STATE.absenceTypes.find(t => 
       t.name.toLowerCase().includes('vacac')
     );
     
     if (!vacationType) return null;
 
-    // Consultamos el calendario agrupado para todo el año (solo nuestro ID)
+    // Consultamos el calendario agrupado para todo el año
     const rawData = await apiFetch(`/api/v3/companies/${STATE.companyId}/calendars-grouped`, {
       from, to, view: 'employee'
     });
@@ -534,7 +520,6 @@ async function fetchEmployees() {
 
     // 2. Fallback final: endpoint de empresa
     if (results.length <= 1) {
-      console.log("[Directory] Falling back to company employees...");
       const companyData = await apiFetch(`/api/v3/companies/${STATE.companyId}/employees?limit=500`);
       results = companyData.data || companyData || [];
     }
@@ -695,7 +680,6 @@ async function loadSavedConfig() {
         STATE.companyId = active.companyId;
         STATE.backendUrl = active.backendUrl;
         saveCredentials();
-        console.log(`\u2705 Empresa activa: ${active.name || active.companyId}`);
       }
       renderCompanySelector();
     }
@@ -854,7 +838,6 @@ function startAutoRefresh() {
   REFRESH_TIMER = setInterval(async () => {
     const isAppVisible = !$('app-screen').classList.contains('hidden');
     if (isAppVisible && !STATE.isLoading && STATE.token && STATE.companyId) {
-      console.log("🔄 Auto-refrescando datos (intervalo 5 min)...");
       await loadData();
     }
   }, 5 * 60 * 1000); 
@@ -882,17 +865,35 @@ async function init() {
   if (!isUnlocked) {
     showScreen('lock-screen');
     
-    const handleUnlock = () => {
+    const handleUnlock = async () => {
       const val = passInput.value.trim().toUpperCase();
+      const errEl = $('lock-error');
+      errEl.classList.add('hidden');
+      
       if (MASTER_PASSWORDS.includes(val)) {
-        sessionStorage.setItem('ssm_unlocked', 'true');
-        lockScreen.classList.remove('active');
-        lockScreen.classList.add('hidden');
-        startApp();
+        try {
+          unlockBtn.disabled = true;
+          unlockBtn.innerHTML = '<span class="spinner-sm"></span> Verificando...';
+          
+          sessionStorage.setItem('ssm_unlocked', 'true');
+          
+          // Ejecutamos el arranque y esperamos
+          await startApp();
+          
+          lockScreen.classList.remove('active');
+          lockScreen.classList.add('hidden');
+        } catch (err) {
+          console.error("Critical login error:", err);
+          unlockBtn.disabled = false;
+          unlockBtn.innerHTML = '🔓 Desbloquear Dashboard';
+          errEl.textContent = `Error técnico: ${err.message || 'Fallo en el arranque del sistema'}`;
+          errEl.classList.remove('hidden');
+        }
       } else {
         const card = lockScreen.querySelector('.setup-card');
         card.classList.add('shake');
-        $('lock-error').classList.remove('hidden');
+        errEl.textContent = 'Clave incorrecta. Por favor revisa el CIF introducido.';
+        errEl.classList.remove('hidden');
         setTimeout(() => card.classList.remove('shake'), 500);
       }
     };
@@ -1042,24 +1043,14 @@ async function startApp() {
   if(empSelAll) empSelAll.addEventListener('click', (e) => {
     e.preventDefault();
     STATE.hiddenEmployeeIds.clear();
-    renderEmployeeFilterList();
-    renderFilters(); renderCalendar(); renderEmployeeList(); renderStats();
-    
-    if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
-      FichajesModule.renderTable();
-    }
+    refreshAllViews();
   });
   
   const empSelNone = $('emp-sel-none');
   if(empSelNone) empSelNone.addEventListener('click', (e) => {
     e.preventDefault();
     STATE.allEmployees.forEach((emp, id) => STATE.hiddenEmployeeIds.add(String(id)));
-    renderEmployeeFilterList();
-    renderFilters(); renderCalendar(); renderEmployeeList(); renderStats();
-    
-    if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
-      FichajesModule.renderTable();
-    }
+    refreshAllViews();
   });
 
   const exportBtn = $('export-btn');
@@ -1100,14 +1091,7 @@ async function startApp() {
     const active = STATE.companies.find(c => c.companyId === STATE.companyId);
     if (active) applyCompanyBranding(active);
     
-    renderCalendar();
-    renderFilters();
-    renderStats();
-    
-    // Redraw signings if active to apply theme-aware table styles
-    if (STATE.currentModule === 'fichajes' && MODULES.fichajes) {
-      MODULES.fichajes.render();
-    }
+    refreshAllViews();
   };
 
   const themeToggleButtons = document.querySelectorAll('.theme-toggle');
@@ -1163,7 +1147,6 @@ async function handleConnect() {
   };
   const isBypassCIF = cifMap.hasOwnProperty(companyId);
   if (isBypassCIF && !token) {
-    console.log("Acceso vía CIF: buscando token real guardado en config.json...");
     try {
       const res = await fetch('/config');
       if (res.ok) {
@@ -1173,7 +1156,6 @@ async function handleConnect() {
           c.name && c.name.toUpperCase().includes(matchName.toUpperCase())
         );
         if (saved && saved.token) {
-          console.log(`✅ Token real encontrado para ${saved.name}. Conectando con datos reales...`);
           STATE.token = saved.token;
           STATE.companyId = saved.companyId;
           STATE.backendUrl = saved.backendUrl || 'https://back-eu1.sesametime.com';
@@ -1288,10 +1270,11 @@ async function loadInitialData() {
   
   try {
     // 1. Parallel fetch of core metadata (siempre datos reales)
-    const [absTypes, meData, teamEmps] = await Promise.all([
+    const [absTypes, meData, teamEmps, presenceData] = await Promise.all([
       fetchAbsenceTypes(),
       fetchMe(),
-      fetchEmployees()
+      fetchEmployees(),
+      fetchPresence()
     ]);
 
     // 2. Process Absence Types
@@ -1389,9 +1372,10 @@ async function loadDataInternal() {
       if (!date) return;
       STATE.calendarData[date] = (dayObj.calendar_types || []).map(ct => {
         const emps = ct.employees || [];
-        emps.forEach(emp => {
-          // COSECHA INTELIGENTE: Si el calendario trae perfiles nuevos o con más info (fotos), los guardamos
-          upsertEmployee(emp);
+        emps.forEach(e => {
+          // Cruce con perfiles locales
+          const emp = STATE.allEmployees.get(String(e.id));
+          if (emp) { /* enriquecimiento opcional */ }
         });
 
         const rawType = ct.calendar_type || {};
@@ -1410,11 +1394,7 @@ async function loadDataInternal() {
     });
 
     updateMonthLabel();
-    renderFilters();
-    renderEmployeeFilterList();
-    renderCalendar();
-    renderEmployeeList();
-    renderStats();
+    refreshAllViews();
   } catch(e) {
     console.error('Internal data fetch failed:', e);
     throw e;
@@ -1446,7 +1426,7 @@ function renderFilters() {
 
     const color = resolveColor(type.color);
     const chip = document.createElement('button');
-    chip.className = 'filter-chip' + (STATE.activeFilters.has(type.id) ? ' active' : '');
+    chip.className = 'absence-filter-chip' + (STATE.activeFilters.has(type.id) ? ' active' : '');
     chip.innerHTML = `
       <span class="filter-dot" style="background:${color}"></span>
       <span class="filter-name">${type.name}</span>
@@ -1466,9 +1446,7 @@ function toggleFilter(typeId, chip) {
     chip.classList.add('active');
   }
   // No need to fetch again, just re-render!
-  renderCalendar();
-  renderEmployeeList();
-  renderStats();
+  refreshAllViews();
 }
 
 // ── Render: employee filters ───────────────────────────────────────────────
@@ -1492,8 +1470,7 @@ function renderEmployeeFilterList() {
     
     const isHidden = STATE.hiddenEmployeeIds.has(String(emp.id));
     
-    const presence = (FichajesModule.realtimePresence || []).find(p => String(p.employeeId) === String(emp.id));
-    const status = presence ? presence.status : 'out';
+    const presenceStatus = STATE.presenceMap?.get(String(emp.id)) || 'out';
     const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
     
     const label = document.createElement('label');
@@ -1505,7 +1482,7 @@ function renderEmployeeFilterList() {
           ${emp.imageProfileURL 
             ? `<img src="${emp.imageProfileURL}" alt="${name}" onerror="this.parentElement.innerHTML='${initials}'; this.parentElement.style.background='linear-gradient(135deg, var(--accent), var(--accent2))'">` 
             : initials}
-          <span class="status-indicator ${status}" title="Estado: ${status}"></span>
+          <span class="status-indicator ${presenceStatus}" title="Estado: ${presenceStatus}"></span>
         </div>
         <div class="emp-filter-info" style="margin-left: 12px;">
           <span class="emp-filter-name" title="${name}" style="font-weight: 600;">${name}</span>
@@ -1518,15 +1495,7 @@ function renderEmployeeFilterList() {
       if (e.target.checked) STATE.hiddenEmployeeIds.delete(String(emp.id));
       else STATE.hiddenEmployeeIds.add(String(emp.id));
       
-      renderFilters();
-      renderCalendar();
-      renderEmployeeList();
-      renderStats();
-      
-      // Sincronizar Fichajes si el módulo está cargado
-      if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
-        FichajesModule.renderTable();
-      }
+      refreshAllViews();
     });
     
     container.appendChild(label);
@@ -1800,17 +1769,38 @@ function buildAvatar(emp, size = 28) {
   div.className = 'day-avatar';
   div.style.cssText = `width:${size}px;height:${size}px;font-size:${size*0.4}px`;
   div.title = name;
+
   if (emp.imageProfileURL) {
-    div.innerHTML = `<img src="${emp.imageProfileURL}" alt="${name}" loading="lazy" onerror="this.style.display='none'" />`;
-  }
-  div.textContent = div.textContent || initials;
-  if (emp.imageProfileURL) {
-    div.innerHTML = `<img src="${emp.imageProfileURL}" alt="${name}" loading="lazy" onerror="this.parentNode.textContent='${initials}'" />${div.textContent.includes(initials) ? '' : ''}`;
-    div.querySelector('img').onerror = () => { div.textContent = initials; };
+    const img = document.createElement('img');
+    img.src = emp.imageProfileURL;
+    img.alt = name;
+    img.loading = 'lazy';
+    img.onerror = () => {
+      div.innerHTML = '';
+      div.textContent = initials;
+    };
+    div.appendChild(img);
   } else {
     div.textContent = initials;
   }
   return div;
+}
+
+/**
+ * Función maestra para refrescar todas las vistas de la aplicación.
+ * Centraliza las llamadas de renderizado para asegurar consistencia.
+ */
+function refreshAllViews() {
+  renderFilters();
+  renderEmployeeFilterList();
+  renderCalendar();
+  renderEmployeeList();
+  renderStats();
+  
+  // Sincronizar Fichajes si el módulo está cargado
+  if (typeof FichajesModule !== 'undefined' && FichajesModule.initialized) {
+    FichajesModule.renderTable();
+  }
 }
 
 // ── Render: employee list ──────────────────────────────────────────────────
@@ -2243,7 +2233,6 @@ async function logout() {
   if (isLocalProxy()) {
     try {
       await fetch('/wipe-all-config', { method: 'POST' });
-      console.log("✅ Configuración del servidor limpiada.");
     } catch (e) {
       console.warn("No se pudo limpiar la configuración del servidor:", e);
     }
@@ -2512,7 +2501,6 @@ const FichajesModule = {
     const start = `${startDate.getFullYear()}-${String(startDate.getMonth()+1).padStart(2, '0')}-${String(startDate.getDate()).padStart(2, '0')}`;
     const end = `${endDate.getFullYear()}-${String(endDate.getMonth()+1).padStart(2, '0')}-${String(endDate.getDate()).padStart(2, '0')}`;
     
-    console.log("Loading Fichajes for", start, "to", end);
     
     try {
       this.renderSkeletons();
@@ -2566,7 +2554,6 @@ const FichajesModule = {
       });
 
       // 3. Carga en paralelo de Presencia Real-time para contadores
-      console.log("Fetching live presence...");
       const presenceRes = await fetchPresence();
       this.realtimePresence = presenceRes;
       
@@ -2576,7 +2563,6 @@ const FichajesModule = {
       });
 
       this.data = this.parseRealSignings(biData, localAbsences);
-      console.log(`BI Data parsed: ${this.data.length} employees with activity.`);
 
       // SUPER FALLBACK: Si no hay datos en BI, pedimos los fichajes emp a emp (Nuevo API Sesame 2026)
       if (this.data.length === 0) {
@@ -2606,7 +2592,6 @@ const FichajesModule = {
                 }
                 
                 if (records.length > 0) {
-                  console.log(`✅ Global Discovery Success at ${path}: Found ${records.length} records.`);
                   globalData = records;
                   if (!DISCOVERY.workingChecks) {
                     DISCOVERY.workingChecks = rawPath;
@@ -2620,7 +2605,6 @@ const FichajesModule = {
                    DISCOVERY.workingChecks = null;
                    localStorage.removeItem('ssm_path_checks');
                 }
-                console.log(`Global discovery at ${rawPath} failed.`);
               }
             }
           }
@@ -2631,7 +2615,6 @@ const FichajesModule = {
              const myId = getCurrentEmployeeId();
              if (myId) {
                 try {
-                   console.log("Hybrid Mode: Fetching personal details for timeline accuracy...");
                    const myChecks = await apiFetch(`/api/v3/employees/${myId}/checks?from=${start}&to=${end}&includeOut=true`, { method: 'GET' });
                    if (myChecks && myChecks.data && myChecks.data.length > 0) {
                       // Filtramos los registros resumidos de "mí mismo" que vienen del global
@@ -2650,11 +2633,9 @@ const FichajesModule = {
           }
 
           // 2. Si lo anterior falla (403/404), procedemos al fallback individual
-          console.warn("Global Discovery failed. Proceeding with individual employee audit (Slow & Self-only if not admin)...");
-
+          
           // Asegurarnos de tener la lista completa de IDs de la empresa
           if (STATE.allEmployees.size <= 1) {
-             console.log("Refreshing employee list for broad search...");
              const freshEmps = await fetchEmployees();
              freshEmps.forEach(e => upsertEmployee(e));
           }
@@ -2679,7 +2660,6 @@ const FichajesModule = {
                const chunk = targetIds.slice(i, i + 8).filter(id => !this.failedIds.has(id));
                if (chunk.length === 0) continue;
 
-               console.log(`Auditing batch of ${chunk.length} emps...`);
                const reqs = chunk.map(id => 
                  apiFetch(`/api/v3/employees/${id}/checks?from=${start}&to=${end}&includeOut=true`, { method: 'GET' })
                  .then(res => ({ id, res }))
@@ -2705,7 +2685,6 @@ const FichajesModule = {
             }
 
             if (rawData.length > 0) {
-               console.log(`Fallback recovered ${rawData.length} raw records. Parsing...`);
                this.data = this.parseRealSignings(rawData, localAbsences);
             }
           }
@@ -2719,7 +2698,6 @@ const FichajesModule = {
       // FINAL MERGE: Si seguimos sin datos pero hay gente PRESENTE (fetchPresence), 
       // generamos registros "fantasma" para que al menos se vean en la lista.
       if (this.data.length === 0 && this.realtimePresence.length > 0) {
-        console.log("Merging presence into empty findings...");
         this.realtimePresence.forEach(p => {
           if ((p.status === 'work' || p.status === 'pause') && p.employee) {
              const emp = p.employee;
@@ -2796,7 +2774,6 @@ const FichajesModule = {
     if (this.currentView === 'day' && isToday) {
       this.refreshInterval = setInterval(() => {
         if (STATE.currentModule === 'fichajes') {
-          console.log("Auto-refreshing dashboard...");
           this.loadData();
         }
       }, 120000); // 2 minutos
@@ -3270,15 +3247,13 @@ async function showContactCard(employeeId) {
   overlay.innerHTML = `
     <div class="contact-card-v2 animate-pop">
       <button class="contact-card-close">&times;</button>
-      <div class="contact-card-header" style="background: linear-gradient(135deg, var(--accent), var(--accent2))">
-        <div class="header-content">
-          <div class="header-avatar">
-            ${emp.imageProfileURL ? `<img src="${emp.imageProfileURL}" alt="${emp.firstName}">` : emp.firstName.substring(0,2).toUpperCase()}
-          </div>
-          <div class="header-text">
-            <h2>${emp.firstName} ${emp.lastName}</h2>
-            <p>${emp.jobTitle || 'Empleado'}</p>
-          </div>
+      <div class="contact-card-header">
+        <div class="contact-card-avatar">
+          ${emp.imageProfileURL ? `<img src="${emp.imageProfileURL}" alt="${emp.firstName}">` : emp.firstName.substring(0,2).toUpperCase()}
+        </div>
+        <div class="contact-card-text">
+          <h2>${emp.firstName} ${emp.lastName}</h2>
+          <p>${emp.jobTitle || 'Empleado'}</p>
         </div>
       </div>
       <div class="contact-card-body">
@@ -3339,3 +3314,6 @@ async function showContactCard(employeeId) {
   document.body.appendChild(overlay);
   overlay.querySelector('.contact-card-close').onclick = () => overlay.remove();
 }
+
+// ── Kick off ────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', init);
