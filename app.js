@@ -2747,6 +2747,11 @@ const FichajesModule = {
       
       // REFRESCAR BARRA LATERAL: Para que los puntos de estado se vean al instante tras la carga
       renderEmployeeFilterList();
+      
+      // WIDGETS AVANZADOS: Mostrar patrones de trabajo y radar
+      if (document.getElementById('patterns-widget')) {
+        this.updateAnalyticsWidgets();
+      }
 
     } catch (err) {
       console.error("Error al cargar fichajes:", err);
@@ -2767,6 +2772,112 @@ const FichajesModule = {
         <td><div class="skeleton-box" style="width: 100%;"></div></td>
       </tr>
     `).join('');
+  },
+
+  updateAnalyticsWidgets() {
+    const pw = document.getElementById('patterns-widget');
+    const rw = document.getElementById('radar-widget');
+    if (!pw || !rw) return;
+
+    pw.style.display = 'block';
+    rw.style.display = 'block';
+
+    // 1. Calcular Patrones (Usuario actual)
+    const meId = String(STATE.currentUser?.id);
+    const myData = this.data.filter(d => String(d.employeeId) === meId && !d.isGhost && !d.isLive);
+    
+    let avgIn = '--:--';
+    let maxDay = '--';
+
+    if (myData.length > 0) {
+      // Hora media de entrada
+      let totalMins = 0;
+      let validIns = 0;
+      let maxSeconds = -1;
+      let maxDate = '';
+
+      myData.forEach(d => {
+        // Encontrar primer fichaje de entrada
+        const firstEntry = d.entries && d.entries.find(e => e.in && e.in !== '--:--' && e.type === 'work');
+        if (firstEntry) {
+          const [h, m] = firstEntry.in.split(':').map(Number);
+          if (!isNaN(h) && !isNaN(m)) {
+            totalMins += (h * 60 + m);
+            validIns++;
+          }
+        }
+        
+        // Encontrar día más largo
+        if (d.workedSeconds > maxSeconds) {
+          maxSeconds = d.workedSeconds;
+          maxDate = d.dayName;
+        }
+      });
+
+      if (validIns > 0) {
+        const avgMins = Math.round(totalMins / validIns);
+        const h = Math.floor(avgMins / 60);
+        const m = avgMins % 60;
+        avgIn = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+      
+      if (maxSeconds > 0) {
+        const h = Math.floor(maxSeconds / 3600);
+        const m = Math.floor((maxSeconds % 3600) / 60);
+        maxDay = `${maxDate} (${h}h ${m}m)`;
+      }
+    }
+
+    document.getElementById('pattern-avg-in').textContent = avgIn;
+    document.getElementById('pattern-max-day').textContent = maxDay;
+
+    // 2. Calcular Radar (Compañeros trabajando AHORA) leyendo de la caché global (más seguro)
+    const radarList = document.getElementById('radar-list');
+    radarList.innerHTML = '';
+
+    const allEmps = Array.from(STATE.allEmployees.values());
+    
+    // Filtrar los que están en 'work' o 'pause', excluyendo al usuario actual
+    const activePeers = allEmps
+      .filter(emp => emp.id && String(emp.id) !== meId && (emp.status === 'work' || emp.status === 'pause'))
+      // Ordenar por estado (trabajando primero) y luego por nombre
+      .sort((a, b) => {
+        if (a.status === 'work' && b.status !== 'work') return -1;
+        if (a.status !== 'work' && b.status === 'work') return 1;
+        return (a.firstName || '').localeCompare(b.firstName || '');
+      });
+
+    if (activePeers.length === 0) {
+      radarList.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center; padding: 10px 0;">Nadie conectado en la empresa.</div>';
+    } else {
+      // Mostrar top 5 disponibles
+      activePeers.slice(0, 5).forEach(emp => {
+        const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Compañero';
+        const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
+        const isWorking = emp.status === 'work';
+        const dotColor = isWorking ? '#22c55e' : '#f59e0b'; // Verde o Naranja
+        const statusText = isWorking ? 'Trabajando' : 'En pausa';
+        
+        const avatar = emp.imageProfileURL 
+          ? `<img src="${emp.imageProfileURL}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;">`
+          : `<div style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: bold;">${initials}</div>`;
+
+        radarList.innerHTML += `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <div style="position: relative;">
+                ${avatar}
+                <div style="position: absolute; bottom: -2px; right: -2px; width: 10px; height: 10px; background: ${dotColor}; border-radius: 50%; border: 2px solid var(--bg-surface);"></div>
+              </div>
+              <div style="font-size: 0.75rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px;">
+                ${name}
+              </div>
+            </div>
+            <span style="font-size: 0.65rem; color: var(--text-muted);">${statusText}</span>
+          </div>
+        `;
+      });
+    }
   },
 
   setupAutoRefresh() {
