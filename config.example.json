@@ -1,0 +1,12 @@
+{
+  "companies": [
+    {
+      "companyId": "your-company-id",
+      "name": "Mi Empresa",
+      "backendUrl": "https://back-eu1.sesametime.com",
+      "brandColor": "#001d4f",
+      "logoUrl": "https://example.com/logo.png"
+    }
+  ],
+  "activeId": "your-company-id"
+}

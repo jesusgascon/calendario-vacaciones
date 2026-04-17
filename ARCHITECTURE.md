@@ -26,7 +26,10 @@ El radar de disponibilidad funciona mediante un sondeo optimizado a la ruta `/ap
 ## 4. Seguridad y Persistencia
 
 - **Gestión de Cookies**: El servidor Python (`server.py`) encapsula la lógica de autenticación para que el frontend no tenga que manejar datos sensibles directamente.
-- **Configuración Segura**: Los parámetros volátiles (Tokens, IDs de empresa) se extraen de `config.json`, que está excluido del control de versiones (`.gitignore`).
+- **Configuración Dividida**:
+  - `config.json`: metadatos persistentes no sensibles, como nombre de empresa, color, logo y backend.
+  - `config.secrets.json`: token y credenciales activas, excluido de Git.
+- **Bootstrap Seguro**: Si esos archivos no existen al clonar el proyecto, el servidor responde con configuración vacía y la interfaz puede crear los ficheros al guardar una empresa. Para documentación pública se versionan `config.example.json` y `config.secrets.example.json`.
 
 ## 5. Visual Stack
 

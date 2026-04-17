@@ -22,7 +22,8 @@ import datetime
 # --- CONFIGURACIÓN ---
 PORT = 8765 # Puerto donde correrá la web
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, 'config.json') # Almacén persistente de credenciales
+CONFIG_FILE = os.path.join(BASE_DIR, 'config.json') # Metadatos persistentes no sensibles
+SECRETS_FILE = os.path.join(BASE_DIR, 'config.secrets.json') # Tokens persistidos fuera de /config
 
 
 def load_config():
@@ -30,18 +31,7 @@ def load_config():
         try:
             with open(CONFIG_FILE) as f:
                 data = json.load(f)
-                # Migración de formato antiguo si existe
-                if 'token' in data and 'companies' not in data:
-                    company = {
-                        "id": data.get("companyId", "empresa-1"),
-                        "name": "Empresa Actual",
-                        "token": data.get("token"),
-                        "companyId": data.get("companyId"),
-                        "backendUrl": data.get("backendUrl", "https://back-eu1.sesametime.com")
-                    }
-                    data = {"companies": [company], "activeId": company["id"]}
-                    save_config(data)
-                return data
+                return normalize_config(data)
         except Exception as e:
             print(f"Error loading config: {e}")
     return {"companies": [], "activeId": ""}
@@ -50,6 +40,97 @@ def load_config():
 def save_config(data):
     with open(CONFIG_FILE, 'w') as f:
         json.dump(data, f, indent=2)
+
+
+def load_secrets():
+    if os.path.exists(SECRETS_FILE):
+        try:
+            with open(SECRETS_FILE) as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+        except Exception as e:
+            print(f"Error loading secrets: {e}")
+    return {"activeId": "", "companies": {}}
+
+
+def save_secrets(data):
+    with open(SECRETS_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def normalize_config(data):
+    if not isinstance(data, dict):
+        return {"companies": [], "activeId": ""}
+
+    # Migración de formato antiguo si existe.
+    if 'token' in data and 'companies' not in data:
+        cid = data.get("companyId", "empresa-1")
+        company = {
+            "companyId": cid,
+            "name": "Empresa Actual",
+            "backendUrl": data.get("backendUrl", "https://back-eu1.sesametime.com"),
+            "brandColor": data.get("brandColor"),
+            "logoUrl": data.get("logoUrl")
+        }
+        config_data = {"companies": [company], "activeId": cid}
+        secrets_data = {
+            "activeId": cid,
+            "companies": {
+                cid: {
+                    "token": data.get("token", ""),
+                    "backendUrl": company["backendUrl"]
+                }
+            }
+        }
+        save_config(config_data)
+        save_secrets(secrets_data)
+        return config_data
+
+    companies = []
+    for company in data.get("companies", []):
+        if not isinstance(company, dict):
+            continue
+        clean = {
+            "companyId": company.get("companyId") or company.get("id"),
+            "name": company.get("name"),
+            "backendUrl": company.get("backendUrl", "https://back-eu1.sesametime.com"),
+            "brandColor": company.get("brandColor"),
+            "logoUrl": company.get("logoUrl") or company.get("logo")
+        }
+        if clean["companyId"]:
+            companies.append(clean)
+
+    normalized = {
+        "companies": companies,
+        "activeId": data.get("activeId") or (companies[0]["companyId"] if companies else "")
+    }
+    return normalized
+
+
+def build_runtime_company(company_id=None):
+    cfg = load_config()
+    secrets = load_secrets()
+
+    target_id = company_id or cfg.get("activeId") or secrets.get("activeId")
+    if not target_id:
+        return None
+
+    company_meta = next((c for c in cfg.get("companies", []) if c.get("companyId") == target_id), None)
+    company_secret = (secrets.get("companies") or {}).get(target_id, {})
+
+    if not company_meta and not company_secret:
+        return None
+
+    merged = {
+        "companyId": target_id,
+        "name": (company_meta or {}).get("name", "Empresa Actual"),
+        "backendUrl": company_secret.get("backendUrl") or (company_meta or {}).get("backendUrl", "https://back-eu1.sesametime.com"),
+        "brandColor": (company_meta or {}).get("brandColor"),
+        "logoUrl": (company_meta or {}).get("logoUrl"),
+        "token": company_secret.get("token", "")
+    }
+    return merged
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -72,6 +153,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._proxy('GET', None)
         elif parsed_path == '/config':
             self._serve_config()
+        elif parsed_path == '/active-credentials':
+            self._serve_active_credentials()
         elif parsed_path.startswith('/feed.ics'):
             self._serve_ics_feed()
         elif parsed_path in ['/', '/index.html']:
@@ -107,33 +190,71 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _serve_active_credentials(self):
+        params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        requested_company = params.get('companyId', [None])[0]
+        runtime = build_runtime_company(requested_company)
+
+        if not runtime or not runtime.get("token"):
+            self._send_error(404, "No hay credenciales activas para la empresa solicitada.")
+            return
+
+        payload = {
+            "companyId": runtime["companyId"],
+            "backendUrl": runtime["backendUrl"],
+            "token": runtime["token"]
+        }
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self._cors_headers()
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+
     def _save_config(self, body):
         try:
             new_company = json.loads(body)
             cfg = load_config()
+            secrets = load_secrets()
             
             # Upsert company
             cid = new_company.get("companyId")
+            if not cid:
+                raise ValueError("companyId es obligatorio")
+
+            public_company = {
+                "companyId": cid,
+                "name": new_company.get("name") or "Mi Empresa",
+                "backendUrl": new_company.get("backendUrl", "https://back-eu1.sesametime.com"),
+                "brandColor": new_company.get("brandColor"),
+                "logoUrl": new_company.get("logoUrl")
+            }
             found = False
             for i, c in enumerate(cfg["companies"]):
                 if c["companyId"] == cid:
                     # MERGE: Keep existing metadata if new data is missing it
-                    for key in ["name", "brandColor", "logoUrl"]:
-                        if not new_company.get(key) and c.get(key):
-                            new_company[key] = c[key]
-                    cfg["companies"][i] = new_company
+                    for key in ["name", "brandColor", "logoUrl", "backendUrl"]:
+                        if public_company.get(key) in [None, ""] and c.get(key):
+                            public_company[key] = c[key]
+                    cfg["companies"][i] = public_company
                     found = True
                     break
             
             if not found:
-                cfg["companies"].append(new_company)
+                cfg["companies"].append(public_company)
             
-            # Sync top-level activeId and principal credentials
+            # Sync top-level active company
             cfg["activeId"] = cid
-            cfg["token"] = new_company.get("token")
-            cfg["companyId"] = cid
+
+            secret_companies = secrets.setdefault("companies", {})
+            secret_entry = secret_companies.get(cid, {})
+            if new_company.get("token"):
+                secret_entry["token"] = new_company.get("token")
+            secret_entry["backendUrl"] = public_company["backendUrl"]
+            secret_companies[cid] = secret_entry
+            secrets["activeId"] = cid
             
             save_config(cfg)
+            save_secrets(secrets)
             
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -152,10 +273,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             data = json.loads(body)
             cid = data.get("companyId")
             cfg = load_config()
+            secrets = load_secrets()
             
             # Remove from list
             initial_count = len(cfg["companies"])
             cfg["companies"] = [c for c in cfg["companies"] if c["companyId"] != cid]
+            (secrets.get("companies") or {}).pop(cid, None)
             
             if len(cfg["companies"]) < initial_count:
                 # If we deleted the active one, pick another
@@ -163,14 +286,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                     if len(cfg["companies"]) > 0:
                         new_active = cfg["companies"][0]
                         cfg["activeId"] = new_active["companyId"]
-                        cfg["token"] = new_active.get("token")
-                        cfg["companyId"] = new_active["companyId"]
+                        secrets["activeId"] = new_active["companyId"]
                     else:
                         cfg["activeId"] = ""
-                        cfg["token"] = ""
-                        cfg["companyId"] = ""
+                        secrets["activeId"] = ""
                 
                 save_config(cfg)
+                save_secrets(secrets)
                 self.send_response(200)
                 self._cors_headers()
                 self.end_headers()
@@ -189,7 +311,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def _wipe_all_config(self):
         try:
-            save_config({"companies": [], "activeId": "", "token": "", "companyId": ""})
+            save_config({"companies": [], "activeId": ""})
+            save_secrets({"companies": {}, "activeId": ""})
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self._cors_headers()
@@ -213,8 +336,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self._send_error(404, "No hay configuración activa.")
             return
 
-        company_cfg = next((c for c in cfg["companies"] if c["companyId"] == active_cid), None)
-        if not company_cfg:
+        company_cfg = build_runtime_company(active_cid)
+        if not company_cfg or not company_cfg.get("token"):
             self._send_error(404, "Empresa no encontrada.")
             return
 
@@ -388,13 +511,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == '__main__':
     cfg = load_config()
+    secrets = load_secrets()
     
-    # Check if we have at least one company or old-style credentials
-    has_cfg = False
-    if cfg.get('token') and cfg.get('companyId'):
-        has_cfg = True
-    elif cfg.get('companies') and len(cfg['companies']) > 0:
-        has_cfg = True
+    has_cfg = bool(cfg.get('companies')) and bool((secrets.get('companies') or {}))
     
     active_name = "Sesame"
     if has_cfg:

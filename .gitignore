@@ -9,7 +9,9 @@ ENV/
 
 # Sensitive Data
 config.json
+config.secrets.json
 cookies.txt
+.codex
 
 # OS
 .DS_Store

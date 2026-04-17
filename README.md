@@ -38,8 +38,14 @@ Un dashboard de alta fidelidad, inteligencia operativa y monitorización avanzad
 
 ### Configuración
 1. Clona el repositorio.
-2. Crea un archivo `config.json` (usa el ejemplo proporcionado en la documentación interna).
-3. Asegúrate de tener tu Token de Sesión de Sesame configurado.
+2. Copia `config.example.json` a `config.json`.
+3. Copia `config.secrets.example.json` a `config.secrets.json`.
+4. Rellena tus datos reales de empresa y token de Sesame.
+
+Notas:
+- `config.json` contiene solo metadatos no sensibles de empresa.
+- `config.secrets.json` contiene el token y queda excluido de Git.
+- Si arrancas sin esos archivos, la aplicación no rompe: se abrirá vacía y los generará al guardar una empresa desde la interfaz.
 
 ### Ejecución
 Usa el script de inicio:
@@ -60,6 +66,13 @@ El proyecto implementa soluciones de ingeniería para maximizar la fiabilidad:
 3. **Bypass de CORS**: Servidor intermedio en Python que gestiona la persistencia de cookies y cabeceras de seguridad.
 
 Para más detalles técnicos, consulta el archivo [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+## 🔐 Publicación Segura en GitHub
+
+Este repositorio está preparado para subirse sin datos personales ni tokens:
+- `config.json` y `config.secrets.json` están ignorados por Git.
+- Los ejemplos versionados son `config.example.json` y `config.secrets.example.json`.
+- Si alguna vez has usado un token real en un commit anterior, debes rotarlo en Sesame aunque el historial se haya saneado después.
 
 ## 📄 Licencia
 Este proyecto está bajo la licencia MIT.

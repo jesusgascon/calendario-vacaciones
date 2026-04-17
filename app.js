@@ -66,6 +66,10 @@ const STATE = {
 };
 
 let REFRESH_TIMER = null;
+let APP_WIRED = false;
+const UI_STATE = {
+  setupMode: 'initial'
+};
 
 // ── Utils ───────────────────────────────────────────────────────────────────
 function toggleSection(sectionId) {
@@ -325,12 +329,21 @@ function upsertEmployee(emp) {
   const idStr = String(emp.id);
   
   const existing = STATE.allEmployees.get(idStr) || {};
+  const photo = emp.imageProfileURL || emp.imageProfile || emp.photoUrl || emp.photo || emp.avatarUrl || emp.avatar || existing.imageProfileURL || '';
+  const firstName = emp.firstName || emp.name || existing.firstName || '';
+  const lastName = emp.lastName || emp.surname || existing.lastName || '';
+  const jobTitle = emp.jobTitle || emp.position?.name || existing.jobTitle || '';
+  const email = emp.email || emp.companyEmail || existing.email || '';
   
   // Mezclamos la información, priorizando la que tenga más campos útiles (fotos, cargos)
   const updated = {
     ...existing,
     ...emp,
     id: emp.id,
+    firstName,
+    lastName,
+    email,
+    jobTitle,
     birthDate: emp.birthDate || emp.birthday || emp.dateOfBirth || emp.date_of_birth || 
                (emp.personalData && (emp.personalData.birthDate || emp.personalData.birthday)) || 
                (emp.details && emp.details.birthDate) || existing.birthDate || '',
@@ -338,8 +351,6 @@ function upsertEmployee(emp) {
                 (emp.contract && emp.contract.startAt) || existing.hiringDate || ''
   };
 
-  // Enriquecer foto si está disponible
-  const photo = emp.imageProfileURL || emp.imageProfile || emp.photoUrl || emp.photo || emp.avatarUrl || emp.avatar || '';
   updated.imageProfileURL = photo || existing.imageProfileURL || '';
   
   STATE.allEmployees.set(idStr, updated);
@@ -358,6 +369,33 @@ function upsertEmployee(emp) {
   if (typeof renderEmployeeFilterList === 'function') {
     renderEmployeeFilterList();
   }
+}
+
+function normalizeSigningType(rawType) {
+  const value = String(rawType || '').toLowerCase();
+
+  if (!value) return 'work';
+
+  if (
+    value.includes('pause') ||
+    value.includes('break') ||
+    value.includes('rest')
+  ) {
+    return 'pause';
+  }
+
+  if (
+    value.includes('work') ||
+    value.includes('check') ||
+    value.includes('entry') ||
+    value.includes('clock') ||
+    value.includes('in') ||
+    value.includes('out')
+  ) {
+    return 'work';
+  }
+
+  return value;
 }
 
 
@@ -674,16 +712,43 @@ async function loadSavedConfig() {
     STATE.activeId = cfg.activeId || "";
 
     if (STATE.companies.length > 0) {
-      const active = STATE.companies.find(c => c.companyId === STATE.activeId) || STATE.companies[0];
-      if (active && (!STATE.token || active.companyId !== STATE.companyId)) {
-        STATE.token = active.token;
+      const targetId = STATE.companyId || STATE.activeId || STATE.companies[0]?.companyId;
+      const active = STATE.companies.find(c => c.companyId === targetId) || STATE.companies[0];
+
+      if (active) {
         STATE.companyId = active.companyId;
-        STATE.backendUrl = active.backendUrl;
-        saveCredentials();
+        STATE.backendUrl = active.backendUrl || STATE.backendUrl || 'https://back-eu1.sesametime.com';
+        STATE.activeId = active.companyId;
+
+        const credentials = await fetchActiveCredentials(active.companyId);
+        if (credentials?.token) {
+          STATE.token = credentials.token;
+          STATE.companyId = credentials.companyId || active.companyId;
+          STATE.backendUrl = credentials.backendUrl || STATE.backendUrl;
+          saveCredentials();
+        }
       }
+
       renderCompanySelector();
     }
   } catch (e) { console.error("Error loading config:", e); }
+}
+
+async function fetchActiveCredentials(companyId = null) {
+  if (!isLocalProxy()) return null;
+
+  const url = companyId
+    ? `/active-credentials?companyId=${encodeURIComponent(companyId)}`
+    : '/active-credentials';
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.warn("Error loading active credentials:", e);
+    return null;
+  }
 }
 
 function renderCompanySelector() {
@@ -695,7 +760,7 @@ function renderCompanySelector() {
     const opt = document.createElement('option');
     opt.value = c.companyId;
     opt.textContent = c.name || c.companyId.substring(0, 8);
-    opt.selected = c.companyId === STATE.companyId;
+    opt.selected = c.companyId === (STATE.companyId || STATE.activeId);
     select.appendChild(opt);
   });
 
@@ -726,6 +791,8 @@ function applyCompanyBranding(company) {
     }
   }
 
+  brandColor = normalizeHexColor(brandColor) || '#60A5FA';
+
   if (logoContainer) {
     if (logoUrl) {
       logoContainer.innerHTML = `<img src="${logoUrl}" style="width:24px;height:24px;object-fit:contain;border-radius:4px;" onerror="this.outerHTML='📅'">`;
@@ -747,8 +814,17 @@ function applyCompanyBranding(company) {
     accentColor = adjustColorBrightness(brandColor, 40); 
   }
 
+  const secondaryAccent = isDark
+    ? adjustColorBrightness(brandColor, 26)
+    : adjustColorBrightness(brandColor, -14);
+
   document.documentElement.style.setProperty('--accent', accentColor);
   document.documentElement.style.setProperty('--accent-glow', brandColor + '40');
+  document.documentElement.style.setProperty('--accent-rgb', hexToRgbString(accentColor));
+  document.documentElement.style.setProperty('--accent-contrast', getContrastTextColor(accentColor));
+  document.documentElement.style.setProperty('--accent2', secondaryAccent);
+  document.documentElement.style.setProperty('--accent2-rgb', hexToRgbString(secondaryAccent));
+  document.documentElement.style.setProperty('--accent2-glow', `${secondaryAccent}33`);
 }
 
 /**
@@ -771,6 +847,45 @@ function adjustColorBrightness(hex, percent) {
     return `#${newR}${newG}${newB}`;
   } catch (e) {
     return `#${hex}`; // Fallback
+  }
+}
+
+function normalizeHexColor(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const withHash = raw.startsWith('#') ? raw : `#${raw}`;
+  if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(withHash)) {
+    return withHash;
+  }
+  return null;
+}
+
+function hexToRgbString(hex) {
+  try {
+    const clean = hex.replace('#', '');
+    const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean;
+    const r = parseInt(full.substring(0, 2), 16);
+    const g = parseInt(full.substring(2, 4), 16);
+    const b = parseInt(full.substring(4, 6), 16);
+    return `${r}, ${g}, ${b}`;
+  } catch (e) {
+    return '108, 99, 255';
+  }
+}
+
+function getContrastTextColor(hex) {
+  try {
+    const clean = hex.replace('#', '');
+    const full = clean.length === 3 ? clean.split('').map(c => c + c).join('') : clean;
+    const r = parseInt(full.substring(0, 2), 16);
+    const g = parseInt(full.substring(2, 4), 16);
+    const b = parseInt(full.substring(4, 6), 16);
+    const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    return luminance > 0.64 ? '#0f172a' : '#ffffff';
+  } catch (e) {
+    return '#ffffff';
   }
 }
 
@@ -809,23 +924,39 @@ async function handleDeleteCompany() {
   }
 }
 
-function switchCompany(cid) {
+async function switchCompany(cid) {
   const next = STATE.companies.find(c => c.companyId === cid);
   if (!next) return;
-  
-  STATE.token = next.token;
-  STATE.companyId = next.companyId;
-  STATE.backendUrl = next.backendUrl;
+
+  const credentials = await fetchActiveCredentials(next.companyId);
+  if (!credentials?.token) {
+    alert('No hay credenciales guardadas para esta empresa.');
+    renderCompanySelector();
+    return;
+  }
+
+  STATE.token = credentials.token;
+  STATE.companyId = credentials.companyId || next.companyId;
+  STATE.activeId = next.companyId;
+  STATE.backendUrl = credentials.backendUrl || next.backendUrl || 'https://back-eu1.sesametime.com';
   saveCredentials();
   
   // Persist choice to server
   if (isLocalProxy()) {
     fetch('/save-config', {
+      headers: { 'Content-Type': 'application/json' },
       method: 'POST',
-      body: JSON.stringify(next)
+      body: JSON.stringify({
+        companyId: next.companyId,
+        name: next.name,
+        backendUrl: next.backendUrl,
+        brandColor: next.brandColor,
+        logoUrl: next.logoUrl
+      })
     });
   }
   
+  renderCompanySelector();
   loadData();
   startAutoRefresh();
 }
@@ -856,6 +987,10 @@ function stopAutoRefresh() {
 
 // ── Init ───────────────────────────────────────────────────────────────────
 async function init() {
+  document.querySelectorAll('.password-toggle').forEach(btn => {
+    btn.addEventListener('click', () => togglePasswordVisibility(btn.dataset.target));
+  });
+
   // --- Master Password Protection ---
   const isUnlocked = sessionStorage.getItem('ssm_unlocked') === 'true';
   const lockScreen = $('lock-screen');
@@ -879,6 +1014,9 @@ async function init() {
           
           // Ejecutamos el arranque y esperamos
           await startApp();
+
+          unlockBtn.disabled = false;
+          unlockBtn.innerHTML = '🔓 Desbloquear Dashboard';
           
           lockScreen.classList.remove('active');
           lockScreen.classList.add('hidden');
@@ -972,9 +1110,55 @@ function switchModule(module) {
 async function startApp() {
   loadCredentials();
 
-  // Wire setup form
-  $('connect-btn').addEventListener('click', handleConnect);
-  $('token-input').addEventListener('keydown', e => { if (e.key==='Enter') handleConnect(); });
+  if (!APP_WIRED) {
+    // Wire setup form
+    $('connect-btn').addEventListener('click', handleConnect);
+    $('token-input').addEventListener('keydown', e => { if (e.key==='Enter') handleConnect(); });
+
+    // Wire nav
+    $$('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+    $$('.vt-btn').forEach(btn => btn.addEventListener('click', () => switchCalView(btn.dataset.calView)));
+    $$('.module-btn').forEach(btn => btn.addEventListener('click', () => switchModule(btn.dataset.module)));
+
+    $('prev-month').addEventListener('click', () => shiftPeriod(-1));
+    $('next-month').addEventListener('click', () => shiftPeriod(1));
+    $('today-btn').addEventListener('click', () => { STATE.currentDate = new Date(); loadData(); });
+    $('refresh-btn').addEventListener('click', loadData);
+    $('logout-btn').addEventListener('click', logout);
+    
+    $('sidebar-toggle').addEventListener('click', () => {
+      STATE.sidebarCollapsed = !STATE.sidebarCollapsed;
+      document.body.classList.toggle('sidebar-collapsed', STATE.sidebarCollapsed);
+      localStorage.setItem('ssm_sidebar_collapsed', STATE.sidebarCollapsed);
+    });
+
+    // Botón para guiar a la multiselección desde Fichajes
+    const btnMulti = $('btn-show-multi-filter');
+    if (btnMulti) {
+      btnMulti.onclick = () => {
+        // Si la sidebar está colapsada, la abrimos
+        if (document.body.classList.contains('sidebar-collapsed')) {
+          document.body.classList.remove('sidebar-collapsed');
+          STATE.sidebarCollapsed = false;
+          localStorage.setItem('ssm_sidebar_collapsed', false);
+        }
+        // Aseguramos que la sección de empleados no esté colapsada internamente
+        const empSection = document.getElementById('employee-section');
+        if (empSection && empSection.classList.contains('is-collapsed')) {
+          empSection.classList.remove('is-collapsed');
+        }
+        // Scroll suave hasta la lista de filtros
+        const empFilterList = $('employee-filter-list');
+        if (empFilterList) {
+          empFilterList.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          empFilterList.classList.add('highlight-flash');
+          setTimeout(() => empFilterList.classList.remove('highlight-flash'), 2000);
+        }
+      };
+    }
+
+    APP_WIRED = true;
+  }
 
   // Wire setup prefill & proxy hint
   if (STATE.backendUrl) $('backend-input').value = STATE.backendUrl;
@@ -983,52 +1167,10 @@ async function startApp() {
     if (hint) hint.innerHTML = '\u2705 Proxy local activo (<code>server.py</code>) — CORS resuelto';
   }
 
-  // Wire nav
-  $$('.nav-item').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
-  $$('.vt-btn').forEach(btn => btn.addEventListener('click', () => switchCalView(btn.dataset.calView)));
-  $$('.module-btn').forEach(btn => btn.addEventListener('click', () => switchModule(btn.dataset.module)));
-
-  $('prev-month').addEventListener('click', () => shiftPeriod(-1));
-  $('next-month').addEventListener('click', () => shiftPeriod(1));
-  $('today-btn').addEventListener('click', () => { STATE.currentDate = new Date(); loadData(); });
-  $('refresh-btn').addEventListener('click', loadData);
-  $('logout-btn').addEventListener('click', logout);
-  
-  $('sidebar-toggle').addEventListener('click', () => {
-    STATE.sidebarCollapsed = !STATE.sidebarCollapsed;
-    document.body.classList.toggle('sidebar-collapsed', STATE.sidebarCollapsed);
-    localStorage.setItem('ssm_sidebar_collapsed', STATE.sidebarCollapsed);
-  });
-
   // Restore sidebar sections state
   Object.entries(STATE.sidebarSections).forEach(([id, collapsed]) => {
     if (collapsed) document.getElementById(id)?.classList.add('is-collapsed');
   });
-
-  // Botón para guiar a la multiselección desde Fichajes
-  const btnMulti = $('btn-show-multi-filter');
-  if (btnMulti) {
-    btnMulti.onclick = () => {
-      // Si la sidebar está colapsada, la abrimos
-      if (document.body.classList.contains('sidebar-collapsed')) {
-        document.body.classList.remove('sidebar-collapsed');
-        STATE.sidebarCollapsed = false;
-        localStorage.setItem('ssm_sidebar_collapsed', false);
-      }
-      // Aseguramos que la sección de empleados no esté colapsada internamente
-      const empSection = document.getElementById('employee-section');
-      if (empSection && empSection.classList.contains('is-collapsed')) {
-        empSection.classList.remove('is-collapsed');
-      }
-      // Scroll suave hasta la lista de filtros
-      const empFilterList = $('employee-filter-list');
-      if (empFilterList) {
-        empFilterList.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        empFilterList.classList.add('highlight-flash');
-        setTimeout(() => empFilterList.classList.remove('highlight-flash'), 2000);
-      }
-    };
-  }
 
   // Apply initial state
   if (STATE.sidebarCollapsed) {
@@ -1064,9 +1206,22 @@ async function startApp() {
 
   const addCompanyBtn = $('add-company-btn');
   if (addCompanyBtn) addCompanyBtn.addEventListener('click', () => {
-    STATE.token = STATE.companyId = null;
-    showSetup();
+    showSetup('add-company');
   });
+
+  const editCompanyBtn = $('edit-company-btn');
+  if (editCompanyBtn) {
+    editCompanyBtn.addEventListener('click', () => {
+      const activeCompany = STATE.companies.find(c => c.companyId === (STATE.companyId || STATE.activeId));
+      if (!activeCompany) return;
+      showSetup('edit-company', activeCompany);
+    });
+  }
+
+  const cancelSetupBtn = $('cancel-setup-btn');
+  if (cancelSetupBtn) {
+    cancelSetupBtn.addEventListener('click', handleCancelSetup);
+  }
 
   const deleteCompanyBtn = $('delete-company-btn');
   if (deleteCompanyBtn) {
@@ -1117,13 +1272,62 @@ async function startApp() {
   }
 }
 
-function showSetup() {
-  showScreen('setup-screen');
+function resetSetupForm() {
   if ($('token-input')) $('token-input').value = '';
   if ($('company-input')) $('company-input').value = '';
   if ($('name-input')) $('name-input').value = '';
   if ($('color-input')) $('color-input').value = '';
   if ($('logo-input')) $('logo-input').value = '';
+  if ($('backend-input')) $('backend-input').value = STATE.backendUrl || 'https://back-eu1.sesametime.com';
+  if ($('setup-error')) {
+    $('setup-error').textContent = '';
+    $('setup-error').classList.add('hidden');
+  }
+}
+
+function populateSetupForm(company = null) {
+  if (!company) return;
+
+  if ($('token-input')) $('token-input').value = STATE.token || '';
+  if ($('company-input')) $('company-input').value = company.companyId || STATE.companyId || '';
+  if ($('name-input')) $('name-input').value = company.name || '';
+  if ($('color-input')) $('color-input').value = company.brandColor || '';
+  if ($('logo-input')) $('logo-input').value = company.logoUrl || '';
+  if ($('backend-input')) $('backend-input').value = company.backendUrl || STATE.backendUrl || 'https://back-eu1.sesametime.com';
+}
+
+function updateSetupModeUI() {
+  const cancelWrap = $('setup-cancel-wrap');
+  if (cancelWrap) {
+    const canReturnToActive = (UI_STATE.setupMode === 'add-company' || UI_STATE.setupMode === 'edit-company') && !!STATE.token && !!STATE.companyId;
+    cancelWrap.classList.toggle('hidden', !canReturnToActive);
+  }
+
+  const title = $('setup-title');
+  const description = $('setup-description');
+  const buttonLabel = $('connect-btn-label');
+
+  if (UI_STATE.setupMode === 'edit-company') {
+    if (title) title.textContent = 'Editar Empresa Activa';
+    if (description) description.textContent = 'Modifica nombre, token, empresa, color, logo o backend de la empresa actual sin crear una nueva.';
+    if (buttonLabel) buttonLabel.textContent = 'Guardar Cambios';
+  } else if (UI_STATE.setupMode === 'add-company') {
+    if (title) title.textContent = 'Añadir Nueva Empresa';
+    if (description) description.textContent = 'Configura otra conexión con Sesame HR y guárdala sin perder la empresa activa.';
+    if (buttonLabel) buttonLabel.textContent = 'Guardar y Conectar';
+  } else {
+    if (title) title.textContent = 'Configuración Inicial';
+    if (description) description.textContent = 'Configura tu conexión con Sesame HR para desplegar el panel de analítica avanzada.';
+    if (buttonLabel) buttonLabel.textContent = 'Sincronizar Panel';
+  }
+}
+
+function showSetup(mode = 'initial', company = null) {
+  UI_STATE.setupMode = mode;
+  showScreen('setup-screen');
+  resetSetupForm();
+  populateSetupForm(company);
+  updateSetupModeUI();
 }
 
 
@@ -1155,10 +1359,15 @@ async function handleConnect() {
         const saved = (cfg.companies || []).find(c => 
           c.name && c.name.toUpperCase().includes(matchName.toUpperCase())
         );
-        if (saved && saved.token) {
-          STATE.token = saved.token;
-          STATE.companyId = saved.companyId;
-          STATE.backendUrl = saved.backendUrl || 'https://back-eu1.sesametime.com';
+        if (saved) {
+          const credentials = await fetchActiveCredentials(saved.companyId);
+          if (!credentials?.token) {
+            throw new Error('No hay token guardado para la empresa encontrada');
+          }
+
+          STATE.token = credentials.token;
+          STATE.companyId = credentials.companyId || saved.companyId;
+          STATE.backendUrl = credentials.backendUrl || saved.backendUrl || 'https://back-eu1.sesametime.com';
           saveCredentials();
           showLoading(true);
           try {
@@ -1210,7 +1419,7 @@ async function finalizeLogin(companyData = {}) {
   const manualLogo = $('logo-input')?.value.trim();
 
   const companyName = manualName || companyData.name || 'Mi Empresa';
-  const brandColor = manualColor || companyData.brandColor || null;
+  const brandColor = normalizeHexColor(manualColor || companyData.brandColor) || null;
   const logoUrl = manualLogo || companyData.logo || null;
 
   saveCredentials();
@@ -1246,6 +1455,7 @@ function showSetupError(msg) {
 async function persistConfigToServer(name, brandColor, logoUrl) {
   if (!isLocalProxy()) return;
   try {
+    const normalizedBrandColor = normalizeHexColor(brandColor) || null;
     await fetch('/save-config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1254,7 +1464,7 @@ async function persistConfigToServer(name, brandColor, logoUrl) {
         token:      STATE.token,
         companyId:  STATE.companyId,
         backendUrl: STATE.backendUrl,
-        brandColor: brandColor,
+        brandColor: normalizedBrandColor,
         logoUrl:    logoUrl
       }),
     });
@@ -1373,9 +1583,9 @@ async function loadDataInternal() {
       STATE.calendarData[date] = (dayObj.calendar_types || []).map(ct => {
         const emps = ct.employees || [];
         emps.forEach(e => {
-          // Cruce con perfiles locales
-          const emp = STATE.allEmployees.get(String(e.id));
-          if (emp) { /* enriquecimiento opcional */ }
+          // Igual que en Fichajes: cosechamos perfiles desde el calendario
+          // para no depender solo del directorio global, que a veces viene recortado.
+          upsertEmployee(e);
         });
 
         const rawType = ct.calendar_type || {};
@@ -1387,7 +1597,7 @@ async function loadDataInternal() {
             name: masterType.name || rawType.name || 'Ausencia',
             color: masterType.color || 'ssmv2-purple'
           },
-          employees: emps,
+          employees: emps.map(emp => STATE.allEmployees.get(String(emp.id)) || emp),
           numEmployees: ct.num_employees || 0,
         };
       });
@@ -1469,6 +1679,7 @@ function renderEmployeeFilterList() {
     if (search && !name.toLowerCase().includes(search)) return;
     
     const isHidden = STATE.hiddenEmployeeIds.has(String(emp.id));
+    const hasPhoto = !!(emp.imageProfileURL && String(emp.imageProfileURL).trim() && String(emp.imageProfileURL).trim().toLowerCase() !== 'null' && String(emp.imageProfileURL).trim().toLowerCase() !== 'undefined');
     
     const presenceStatus = STATE.presenceMap?.get(String(emp.id)) || 'out';
     const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
@@ -1478,9 +1689,9 @@ function renderEmployeeFilterList() {
     label.innerHTML = `
       <div class="emp-filter-main">
         <input type="checkbox" value="${emp.id}" ${isHidden ? '' : 'checked'} class="ssm-checkbox">
-        <div class="emp-avatar-filter" style="${emp.imageProfileURL ? '' : `background: linear-gradient(135deg, var(--accent), var(--accent2));`}">
-          ${emp.imageProfileURL 
-            ? `<img src="${emp.imageProfileURL}" alt="${name}" onerror="this.parentElement.innerHTML='${initials}'; this.parentElement.style.background='linear-gradient(135deg, var(--accent), var(--accent2))'">` 
+        <div class="emp-avatar-filter ${hasPhoto ? '' : 'no-photo'}">
+          ${hasPhoto
+            ? `<img src="${emp.imageProfileURL}" alt="${name}" onerror="this.parentElement.classList.add('no-photo'); this.parentElement.innerHTML='${initials}'">` 
             : initials}
           <span class="status-indicator ${presenceStatus}" title="Estado: ${presenceStatus}"></span>
         </div>
@@ -2208,41 +2419,48 @@ function switchCalView(calView) {
 
 // ── Screen management ──────────────────────────────────────────────────────
 function showApp() {
+  UI_STATE.setupMode = 'initial';
   $('setup-screen').classList.remove('active');
   $('setup-screen').classList.add('hidden');
   $('app-screen').classList.remove('hidden');
   $('app-screen').classList.add('active');
 }
 
-function showSetup() {
-  $('app-screen').classList.remove('active');
-  $('app-screen').classList.add('hidden');
-  $('setup-screen').classList.remove('hidden');
-  $('setup-screen').classList.add('active');
-}
-
 function showLoading(show) {
   $('loading-overlay').classList.toggle('hidden', !show);
 }
 
+function handleCancelSetup() {
+  if (STATE.token && STATE.companyId) {
+    showApp();
+  } else {
+    showSetup('initial');
+  }
+}
+
+function togglePasswordVisibility(inputId) {
+  const input = $(inputId);
+  const toggle = document.querySelector(`.password-toggle[data-target="${inputId}"]`);
+  if (!input || !toggle) return;
+
+  const visible = input.type === 'text';
+  input.type = visible ? 'password' : 'text';
+  toggle.textContent = visible ? 'Mostrar' : 'Ocultar';
+}
+
 async function logout() {
   stopAutoRefresh();
-  clearCredentials();
-
-  // Limpiar también el servidor si es entorno local
-  if (isLocalProxy()) {
-    try {
-      await fetch('/wipe-all-config', { method: 'POST' });
-    } catch (e) {
-      console.warn("No se pudo limpiar la configuración del servidor:", e);
-    }
-  }
+  sessionStorage.removeItem('ssm_unlocked');
 
   STATE.token = STATE.companyId = STATE.currentUser = null;
   STATE.absenceTypes = [];
   STATE.calendarData = {};
   STATE.activeFilters = new Set();
-  showSetup();
+  $('master-pass').value = '';
+  $('lock-error').classList.add('hidden');
+  $('unlock-btn').disabled = false;
+  $('unlock-btn').innerHTML = '🔓 Desbloquear Dashboard';
+  showScreen('lock-screen');
 }
 
 // ── Start ──────────────────────────────────────────────────────────────────
@@ -2934,7 +3152,7 @@ const FichajesModule = {
         checkIn: inStr,
         checkOut: outStr,
         secondsWorked: c.secondsWorked || c.accumulatedSeconds || c.seconds || 0,
-        type: (c.checkType || c.type || c.entryType || 'work').toLowerCase(),
+        type: normalizeSigningType(c.checkType || c.type || c.entryType || 'work'),
         employeeName: c.employeeName || 
                       (c.employee ? `${c.employee.firstName} ${c.employee.lastName}` : null) || 
                       (() => {
