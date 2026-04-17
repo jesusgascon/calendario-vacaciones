@@ -1,81 +1,88 @@
 # 🗓️ Sesame Premium Dashboard
 
-Un dashboard de alta fidelidad, inteligencia operativa y monitorización avanzada para **Sesame HR**. Diseñado para centralizar la gestión de vacaciones, ausencias de calendario y registros de actividad real en una interfaz panorámica y profesional.
+Un dashboard de alta fidelidad, inteligencia operativa y monitorización avanzada para **Sesame HR**. Diseñado para centralizar la gestión de vacaciones, ausencias de calendario y registros de actividad real en una interfaz panorámica y verdaderamente profesional. Ha sido diseñado como un proyecto integral de front/back (SPA + Proxy Local) para mejorar la usabilidad técnica de recursos humanos.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Frontend](https://img.shields.io/badge/frontend-JS%20Vanilla-yellow.svg)
 ![Backend](https://img.shields.io/badge/backend-Python%20Proxy-green.svg)
 ![Status](https://img.shields.io/badge/status-Stable-success.svg)
 
-## ✨ Características Principales
+---
 
-### 📡 Radar de Disponibilidad (Live Presence)
-- **Monitorización en Tiempo Real**: Visualiza quién está trabajando, quién está en pausa y quién está ausente en este preciso instante.
-- **Indicadores Visuales**: Semáforos de estado (Verde/Ámbar/Rojo) integrados en la barra lateral y en el panel de equipo.
-- **Resumen Ejecutivo**: Contador rápido de empleados activos vs. pausados para una gestión de carga inmediata.
+## 🌟 Resumen de Módulos (Core Features)
 
-### 🧠 Operational Insights (Paneles de Control)
-- **Detección de Incidencias**: Identificación automática de salidas no registradas, jornadas incompletas o posibles horas extra.
-- **Validaciones Sugeridas**: Alertas sobre registros que requieren revisión humana (múltiples tramos, solapamientos).
-- **Radar de Anomalías**: Cálculo automático de KPIs de cumplimiento horario y fragmentación de la jornada.
-- **Previsión de Ausencias**: Panel dedicado a las próximas vacaciones y permisos de los próximos 14 días.
+La aplicación está dividida en dos pilares o módulos fundamentales, pensados para proveer tanto supervisión gerencial como asistencia técnica de primer nivel.
 
-### 📊 Módulo de Fichajes y "Mis Patrones"
-- **Análisis Semanal**: Calcula automáticamente tu media de entrada, salida y detecta tu jornada más productiva (la más larga).
-- **Cruce Inteligente (Smart Match)**: Vincula fichajes reales con ausencias del calendario para explicar huecos en la actividad.
-- **Timeline de Actividad**: Vista gráfica panorámica con indicadores de Trabajo, Pausas y Ausencias.
-- **Exportación Directa**: Generación de reportes CSV para administración.
+### 1. 📡 Radar de Disponibilidad, Presencia y Fichajes
+Este módulo sustituye al tradicional panel de marcajes en un panel tipo "Torre de Control".
+- **Monitorización en Tiempo Real "Live"**: Visualiza quién está trabajando, quién está en pausa y quién está ausente en el mismo instante, extrayendo datos directos invisibles de la API de SesameHR.
+- **Indicadores Visuales y Semáforos**: Semáforos de estado (Verde / Ámbar / Rojo) que fluyen por todo el DOM, acoplándose al árbol dom del listado de empleados en el Sidebar.
+- **Resumen Ejecutivo Inmediato**: Un contador sumatorio visual interactivo que permite saber de un simple vistazo "Cuántos faltan", "Cuántos están en descanso", cruzando dicha información frente a las jornadas planeadas.
+- **Detección Automática de Incidencias**: El aplicativo lee los fichajes en vivo e identifica heurísticamente "salidas sin marcar", "turnos partidos no cerrados" y "potencial de horas extras".
 
-### 🎨 Experiencia de Usuario Premium
-- **Motor de Temas Dual**: Modo Claro y Modo Oscuro con estética de alta gama (glassmorphism y sombras suaves).
-- **Estética Empresarial**: Diseño compacto de alta densidad informativa, ideal para pantallas grandes.
-- **Reactividad Total**: Filtrado instantáneo por empleado, búsqueda y navegación temporal fluida.
-
-## 🚀 Instalación Rápida
-
-### Requisitos previos
-- Python 3.8 o superior instalado.
-
-### Configuración
-1. Clona el repositorio.
-2. Copia `config.example.json` a `config.json`.
-3. Copia `config.secrets.example.json` a `config.secrets.json`.
-4. Rellena tus datos reales de empresa y token de Sesame.
-
-Notas:
-- `config.json` contiene solo metadatos no sensibles de empresa.
-- `config.secrets.json` contiene el token y queda excluido de Git.
-- Si arrancas sin esos archivos, la aplicación no rompe: se abrirá vacía y los generará al guardar una empresa desde la interfaz.
-
-### Ejecución
-Usa el script de inicio:
-```bash
-bash start.sh
-```
-O manualmente:
-```bash
-python3 server.py
-```
-Accede en: `http://localhost:8765`
-
-## 🛠️ Arquitectura Técnica Avanzada
-
-El proyecto implementa soluciones de ingeniería para maximizar la fiabilidad:
-1. **Estrategia de Doble Servidor (Failover)**: La aplicación detecta fallos de conectividad o bloqueos de CORS y conmuta automáticamente entre la API directa y el **Proxy Local de Python**.
-2. **Normalización de Datos BI**: Motor interno para procesar respuestas complejas del motor de BI de Sesame y transformarlas en objetos de negocio simplificados.
-3. **Bypass de CORS**: Servidor intermedio en Python que gestiona la persistencia de cookies y cabeceras de seguridad.
-
-Para más detalles técnicos, consulta el archivo [ARCHITECTURE.md](./ARCHITECTURE.md).
-
-## 🔐 Publicación Segura en GitHub
-
-Este repositorio está preparado para subirse sin datos personales ni tokens:
-- `config.json` y `config.secrets.json` están ignorados por Git.
-- Los ejemplos versionados son `config.example.json` y `config.secrets.example.json`.
-- Si alguna vez has usado un token real en un commit anterior, debes rotarlo en Sesame aunque el historial se haya saneado después.
-
-## 📄 Licencia
-Este proyecto está bajo la licencia MIT.
+### 2. 🧠 Calendario de Inteligencia Operativa y Vacaciones
+Abstrae la lectura manual de solicitudes en una parrilla inmensa y predictiva.
+- **Procesador de "Smart Match" (Cruce)**: Un motor JS local que conecta calendarios de ausencia autorizados (`schedule/v1`) con los marcajes del entorno fichajes (`work-entries/v3`), alertando de conflictos directos "el usuario trabajó un día festivo" o "estuvo ausente sin solicitud".
+- **Balance Total Anual Calculado**: Algoritmos autónomos averiguan los días totales según contrato vs tomados actualmente.
+- **Vista de Cuadrícula (Mes/Semana/Día)**: Escalado panorámico renderizado usando Flexbox Dinámico, asegurando no sufrir ralentizaciones aun cargando múltiples cientos de empleados.
+- **Sincronización ICS Externa**: Habilidad directa de exportación para Outlook o Google Calendars, sirviendo como Feed permanente directo.
 
 ---
-*Desarrollado para optimizar la visibilidad y el control operativo en entornos Sesame HR.*
+
+## 🛠️ Experiencia Premium (UI/UX)
+El producto base fue desarrollado bajo los estándares más restrictivos de usabilidad visual de cara a pantallas gerenciales ultra anchas o salas de mando técnica (Kiosko Mode).
+- **Motor de Theming Dual**: Incorpora tanto Modo Claro (Light) como Oscuro (Dark) alterando tokens de diseño locales utilizando abstracciones de Glassmorphism.
+- **Diseño Ultra-Denso**: Priorización total a la colocación y visualización del dato.
+- **Sidebars Responsivos**: Capacitados para comprimir y colapsarse, manteniendo los identificadores colorímetricos primarios (Ausencias con colores hash MD5).
+
+---
+
+## 🚀 Guía de Instalación y Primeros Pasos
+
+El proyecto consta de una capa cliente ligera (`app.js`) y un servidor en Python (`server.py`).
+
+### Requisitos previos fundamentales
+- **Python 3.8+** (Instalado globalmente o en Entorno Virtual).
+- **Conectividad Mínima** a internet para poder descargar de CDN las fuentes ("JetBrains Mono", "Plus Jakarta Sans") y la pequeña librería de gráficos (Chart.js).
+
+### Descarga e Inicialización
+1. Clona el repositorio desde GitHub de forma local.
+2. Gestiona tu configuración (El sistema es "multi-compañía"):
+   - Copia o duplica el archivo `.example` a sus homólogos ocultos.
+   - `cp config.example.json config.json`
+   - `cp config.secrets.example.json config.secrets.json`
+3. Ejecuta el Proxy Bridge Local
+   - Usando el empaquetador Unix: `bash start.sh`
+   - O usando el núcleo nativo de sistema: `python3 server.py`
+4. El script está configurado para "robar el foco" y abrir el dashboard en tu navegador predeterminado automáticamente: `http://localhost:8765`. 
+
+### Autenticación e Inserción de Tokens
+No existe pantalla de login clásico, utilizamos un puente JWT y extracción web.
+Las credenciales secretas no deben empujarse nunca (`.gitignore`), así que tienes un script extra que roba validamente la cookie si la desconoces.
+`python3 get-token.py`. El sistema imprimirá instrucciones.
+
+---
+
+## 🛡️ Arquitectura Técnica y Abstracción de WAF (Web Application Firewall)
+
+A nivel de software e ingeniería de redes, este producto fue desarrollado con metodologías de *Bypass Web* ya que sistemas como el Bi-Engine de Sesame están fuertemente protegidos.
+**Principios fundamentales de nuestra arquitectura**:
+1. **Doble Servidor de Fallback**: Si las conexiones en Javascript Puro y en bruto (Direct llamadas Fetch a URLs remotos) decaen por bloqueos de CORS, la app reintenta de inmediato pasando por tu BackEnd local (`/sesame-api/`).
+2. **Proxy Spoofing**: El Python levanta las políticas HTTP para mimetizarse simulando un agente estándar como "Chrome 120" en un PC Windows.
+3. **Escudo de Estado**: Todos los diccionarios, IDs e Imágenes se mantienen almacenados y deduplicados en el objeto `STATE` (singleton global) de JS, minimizando llamadas excesivas a red.
+
+> **Consulte el archivo profundo:** Para ver ejemplos de cómo las matrices y los diccionarios cruzan los balances, lee detenidamente nuestro [ARCHITECTURE.md](./ARCHITECTURE.md).
+
+---
+
+## 🔐 Seguridad e Integridad de Repositorio (Publicación en Github)
+
+Este repositorio es agnóstico del despliegue, todo está anonimizado.
+- Ningún archivo local `.json` a excepción de los `.example` se suben jamás hacia los remotos. Tu información corporativa e `ids` quedan relegados a tu máquina.
+- Queda totalmente proscrita la automatización de la integración de configuraciones privadas.
+
+## 📄 Licencia y Credenciales
+Construido y mantenido activamente para despliegues cerrados. Totalmente cobijado bajo la Licencia **MIT**.
+
+---
+*Desarrollado para optimizar la visibilidad y el control operativo en entornos cerrados y corporativos de Sesame HR.*
