@@ -1,11 +1,29 @@
 #!/usr/bin/env python3
 """
 server.py — Servidor proxy local para Calendario Vacaciones Sesame HR
-Uso: python3 server.py
 
-- Sirve la web en http://localhost:8765
-- Proxy de /sesame-api/* → https://back-eu1.sesametime.com/* (evita CORS)
-- Endpoint /config para guardar/leer credenciales guardadas
+=============================================================================
+DESCRIPCIÓN GENERAL Y ARQUITECTURA
+=============================================================================
+Este script en Python funciona como el pilar fundamental que conecta el cliente web
+(el dashboard de la aplicación) con los servidores remotos de Sesame HR. 
+
+¿Por qué existe este Proxy?
+---------------------------
+La API de Sesame HR está protegida con estrictas reglas de CORS (Cross-Origin Resource
+Sharing) que evitan que una aplicación local basada en JavaScript puro (`file://` o 
+`localhost`) reciba datos directamente a través del navegador web.
+
+Este servidor de Python actúa como puente:
+ 1. Sirve la app frontend a través del puerto definido localmente (ej: http://localhost:8765)
+ 2. Intercepta cualquier llamada que el frontend hace la ruta local `/sesame-api/*`
+ 3. Copia esos headers (JWT token, CSID, identificadores de la empresa)
+ 4. Envía la solicitud real a los servidores remotos originarios (`https://back-eu1...`)
+    evitando la restricción CORS ya que las peticiones servidor a servidor no aplican CORS en sí.
+ 5. Manda la respuesta (incluidas las inyecciones de las cabeceras CORS) de vuelta al navegador.
+
+Asimismo actúa como el motor central que guarda en un JSON persitente las distintas credenciales
+multicompañía por si estamos gestionando varios grupos/corporaciones desde nuestro panel de control.
 """
 import http.server
 import urllib.request
@@ -19,11 +37,14 @@ import sys
 import hashlib
 import datetime
 
-# --- CONFIGURACIÓN ---
-PORT = 8765 # Puerto donde correrá la web
+# --- CONFIGURACIÓN ESTRUCTURAL ---
+# PORT define desde qué puerto de tu máquina local vas a acceder al panel (ej: 8765)
+PORT = 8765 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-CONFIG_FILE = os.path.join(BASE_DIR, 'config.json') # Metadatos persistentes no sensibles
-SECRETS_FILE = os.path.join(BASE_DIR, 'config.secrets.json') # Tokens persistidos fuera de /config
+# CONFIG_FILE es donde guardamos configuraciones menores (No estáticas sino perfiles funcionales)
+CONFIG_FILE = os.path.join(BASE_DIR, 'config.json') 
+# SECRETS_FILE guarda la confidencialidad pura como el Bearer de Sesame
+SECRETS_FILE = os.path.join(BASE_DIR, 'config.secrets.json')
 
 
 def load_config():
@@ -109,6 +130,16 @@ def normalize_config(data):
 
 
 def build_runtime_company(company_id=None):
+    """
+    Construye la combinación del perfil (nombre, url de logo, color) con el secreto (token)
+    correspondiente a una empresa. Útil para cargar en rutinas secundarias y armar peticiones.
+    
+    Flujo:
+    - Trata de usar `company_id`. Si es nulo, usará el predeterminado/activo en local.
+    - Va a config.json a cargar los visuales.
+    - Va a config.secrets.json a cargar el JWT (`token`).
+    - Fusiona todo el set en memoria.
+    """
     cfg = load_config()
     secrets = load_secrets()
 
@@ -134,12 +165,21 @@ def build_runtime_company(company_id=None):
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
+    """
+    Clase principal y manejador HTTP: Sirve de enrutador inteligente.
+    Todas las solicitudes locales convergerán en los métodos HTTP estándar (OPTIONS, GET, POST).
+    """
 
     def __init__(self, *args, **kwargs):
+        # Heredamos desde SimpleHTTP para poder servir ficheros (HTML, JS, CSS) desde disco automáticamente
         super().__init__(*args, directory=BASE_DIR, **kwargs)
 
     # ── CORS preflight ───────────────────────────────────────────────────
     def do_OPTIONS(self):
+        """
+        Intercepta las llamadas preflight "OPTIONS" hechas por Axios o Fetch del Navegador.
+        Prevenimos el bloqueo inyectando permitividad abierta.
+        """
         self.send_response(200)
         self._cors_headers()
         self.end_headers()
@@ -422,19 +462,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps({"error": msg, "code": code}).encode())
 
-    # ── Proxy ─────────────────────────────────────────────────────────────
     def _proxy(self, method, body):
+        """
+        El núcleo central y Proxy que clona las peticiones salientes hacia Sesame HR.
+        
+        Si el frontend llama a local: http://localhost:8765/sesame-api/api/v3/company
+        Este método quita '/sesame-api', inyecta seguridad y lo lleva al backend de Sesame HR real.
+        """
         api_path = self.path[len('/sesame-api'):]   # strip prefix
         backend = self.headers.get('X-Backend-Url', 'https://back-eu1.sesametime.com').rstrip('/')
         
-        # 🛡️ Saneado y Allowlist de Upstream (Seguridad)
+        # 🛡️ Saneado y Allowlist de Upstream (Seguridad Limitada para evitar SSRF en el dashboard)
         ALLOWED_UPSTREAMS = [
             'https://back-eu1.sesametime.com',
             'https://api-eu1.sesametime.com',
             'https://bi-engine.sesametime.com'
         ]
         if backend not in ALLOWED_UPSTREAMS:
-            print(f'  ⚠️  Upstream bloqueado o inválido: {backend}. Usando fallback.')
+            print(f'  ⚠️  Upstream bloqueado o inválido: {backend}. Usando fallback a default seguro.')
             backend = 'https://back-eu1.sesametime.com'
 
         target = backend + api_path
@@ -442,6 +487,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         hdrs = {}
         for h in self.headers:
             hl = h.lower()
+            # Quitamos Host de origen para que parezca llamado nativo al WAF/CDN
             if hl in ['host', 'connection', 'content-length']:
                 continue
             hl_allowed = hl in ['authorization', 'csid', 'content-type', 'accept', 'user-agent', 'origin', 'referer']

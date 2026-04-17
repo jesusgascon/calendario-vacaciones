@@ -1,11 +1,27 @@
 #!/usr/bin/env python3
 """
 get-token.py — Extractor automático de credenciales de Sesame HR
-Uso: python3 get-token.py
 
-Inicia un receptor local, te muestra un snippet JS para pegarlo en la consola
-del navegador mientras estás en app.sesametime.com, y guarda las credenciales
-en config.json automáticamente.
+=============================================================================
+DESCRIPCIÓN Y FUNCIONAMIENTO DE UTILIDAD
+=============================================================================
+El objetivo de este script es extraer las credenciales JWT de autenticación de
+Sesame HR sin necesidad de ingeniería inversa al flujo de OAUTH de la web oficial.
+
+¿Cómo lo logra?
+1. Este servidor local abre un Micro-Servidor en el puerto 8766.
+2. Le proporciona al usuario un código JavaScript (Snippet) con instrucciones.
+3. El usuario arrastra o copia ese código JS a la barra de su navegador
+   (estando ya logueado en la web OFICIAL de app.sesametime.com).
+4. El Snippet JS "parchea" (hace monkey-patching) del objeto nativo `window.fetch`
+   y `XMLHttpRequest` para interceptar las siguientes peticiones y robar el
+   token (las credenciales 'Authorization' y 'CSID').
+5. Una vez robado, el propio Snippet envía esos tokens a nuestro micro-servidor local 
+   (puerto 8766).
+6. El micro-servidor recibe los datos, genera o actualiza config.json, y se cierra.
+
+Esto facilita enormemente la integración puesto que la API de SesameHR requiere
+una renovación de Token para acceder.
 """
 import http.server
 import json
@@ -29,7 +45,12 @@ javascript:(function(){let token=null,csid=null;const div=document.createElement
 
 
 class Receiver(http.server.BaseHTTPRequestHandler):
+    """
+    Subclase que atiende las llamadas entrantes para nuestro puerto 8766 local.
+    Al captar una petición por POST a '/receive', procesa el cuerpo y cierra.
+    """
     def do_OPTIONS(self):
+        # Necesitamos la regla OPTIONS configurada correctamente en puerto diferente para el JS
         self.send_response(200)
         self._cors()
         self.end_headers()

@@ -1,6 +1,19 @@
 /* ============================================================
    SESAME VACATION CALENDAR - app.js
    Lógica de frontend, gestión de estado y filtrado.
+   
+   ============================================================
+   ARQUITECTURA DEL FRONTEND
+   ============================================================
+   1. State Management (STATE): Uso de un objeto central global
+      que actúa como fuente única de verdad para datos y configuración.
+   2. API Layer: Funciones de envoltura asíncronas (`apiFetch`) que 
+      se comunican con nuestro proxy local servidor (`server.py`) 
+      para evitar problemas de CORS de los navegadores.
+   3. Discovery Intelligence (DISCOVERY): Bloque automático que prueba
+      múltiples endpoints ocultos de la API remota para autoconfigurarse.
+   4. Render Flow: Dom virtual simple basado en Vanilla JS (Manipulación
+      del DOM con ID binding).
    ============================================================ */
 
 'use strict';
@@ -41,28 +54,33 @@ function apiBase() {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────
+/**
+ * Objeto central del estado de la aplicación.
+ * Mantiene de manera reactiva (manualmente mutada) todos los datos que luego son pintados en el DOM.
+ */
 const STATE = {
-  token:       null,
-  companyId:   null,
-  backendUrl:  null,
-  currentUser: null,
-  theme:       localStorage.getItem('theme') || 'dark',
-  companies:     [],     // List of company configs
-  activeId:      "",     // Currently active company ID
-  allEmployees:  new Map(), // Todos los empleados detectados
-  hiddenEmployeeIds: new Set(), // Empleados ocultos en el filtro
-  calendarData: {},     // 'YYYY-MM-DD' → [{type, employees}]
-  currentDate:  new Date(),
-  calView:      'month', // 'month' | 'week'
-  activeView:   'calendar',
-  isLoading:    false,  // Guard to prevent redundant loads
+  token:       null,           // Token JWT cargado del localStorage o configuración
+  companyId:   null,           // ID (UUID) de la compañía activa para las URIs Sesame
+  backendUrl:  null,           // URL del proxy/servidor destino 
+  currentUser: null,           // Datos del usuario que se ha logueado
+  theme:       localStorage.getItem('theme') || 'dark', // CSS theme (Light/Dark mode)
+  companies:     [],           // List of company configs (multicompañía config local)
+  activeId:      "",           // Currently active company ID
+  allEmployees:  new Map(),    // Diccionario de Todos los empleados (ID -> info)
+  hiddenEmployeeIds: new Set(),// Set de empleados filtrados (ocultos en la interfaz visual)
+  calendarData: {},            // Cacheo profundo: 'YYYY-MM-DD' → [{type, employees}]
+  currentDate:  new Date(),    // Puntero de la fecha (mes visualizado actualmente)
+  calView:      'month',       // Alternado de vistas: 'month' | 'week'
+  activeView:   'calendar',    // Modos
+  isLoading:    false,         // Bloqueador de mutabilidad para prevenir dobles fetches
+  // Configs del Sidebar layout persistidos:
   sidebarCollapsed: localStorage.getItem('ssm_sidebar_collapsed') === 'true',
   sidebarSections: {
     'absence-section': localStorage.getItem('sidebar_section_absence_collapsed') === 'true',
     'employee-section': localStorage.getItem('sidebar_section_employee_collapsed') === 'true'
   },
-  currentModule: 'vacaciones',
-  presenceMap: new Map() // employeeId -> status ('work', 'pause', 'out')
+  currentModule: 'vacaciones', // Módulo de vistas general ('vacaciones' o 'fichajes')
+  presenceMap: new Map()       // employeeId -> status ('work', 'pause', 'out')
 };
 
 let REFRESH_TIMER = null;
@@ -607,9 +625,9 @@ const COLOR_MAP = {
   'ssmv2-red':    '#F87171',
 };
 function resolveColor(colorKey) {
-  if (!colorKey) return '#A78BFA';
+  if (!colorKey) return getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#3B82F6';
   if (colorKey.startsWith('#')) return colorKey;
-  return COLOR_MAP[colorKey] || '#A78BFA';
+  return COLOR_MAP[colorKey] || (getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#3B82F6');
 }
 function hexToRgba(hex, alpha = 0.25) {
   const r = parseInt(hex.slice(1,3),16);
@@ -817,14 +835,20 @@ function applyCompanyBranding(company) {
   const secondaryAccent = isDark
     ? adjustColorBrightness(brandColor, 26)
     : adjustColorBrightness(brandColor, -14);
+  const accentLight = isDark
+    ? adjustColorBrightness(accentColor, 24)
+    : adjustColorBrightness(accentColor, 18);
 
   document.documentElement.style.setProperty('--accent', accentColor);
-  document.documentElement.style.setProperty('--accent-glow', brandColor + '40');
+  document.documentElement.style.setProperty('--accent-glow', hexToRgba(accentColor, isDark ? 0.32 : 0.18));
+  document.documentElement.style.setProperty('--accent-light', accentLight);
   document.documentElement.style.setProperty('--accent-rgb', hexToRgbString(accentColor));
   document.documentElement.style.setProperty('--accent-contrast', getContrastTextColor(accentColor));
   document.documentElement.style.setProperty('--accent2', secondaryAccent);
   document.documentElement.style.setProperty('--accent2-rgb', hexToRgbString(secondaryAccent));
   document.documentElement.style.setProperty('--accent2-glow', `${secondaryAccent}33`);
+  document.documentElement.style.setProperty('--accent-soft', hexToRgba(accentColor, isDark ? 0.14 : 0.08));
+  document.documentElement.style.setProperty('--accent-soft-strong', hexToRgba(accentColor, isDark ? 0.2 : 0.14));
 }
 
 /**
@@ -1695,9 +1719,9 @@ function renderEmployeeFilterList() {
             : initials}
           <span class="status-indicator ${presenceStatus}" title="Estado: ${presenceStatus}"></span>
         </div>
-        <div class="emp-filter-info" style="margin-left: 12px;">
-          <span class="emp-filter-name" title="${name}" style="font-weight: 600;">${name}</span>
-          ${emp.jobTitle ? `<span class="emp-filter-job" style="font-size: 0.65rem;">${emp.jobTitle}</span>` : ''}
+        <div class="emp-filter-info ml-12">
+          <span class="emp-filter-name emp-filter-name-strong" title="${name}">${name}</span>
+          ${emp.jobTitle ? `<span class="emp-filter-job">${emp.jobTitle}</span>` : ''}
         </div>
       </div>
     `;
@@ -1717,7 +1741,7 @@ function renderEmployeeFilterList() {
     const total = STATE.allEmployees.size;
     const hidden = STATE.hiddenEmployeeIds.size;
     const selected = total - hidden;
-    title.innerHTML = `Empleados <span style="font-size:0.75rem; color:var(--text-muted); font-weight:normal">(${selected}/${total})</span>`;
+    title.innerHTML = `Empleados <span class="section-count">(${selected}/${total})</span>`;
   }
 }
 
@@ -2160,6 +2184,12 @@ function renderStats() {
   `;
 
   const isDark = STATE.theme === 'dark';
+  const css = getComputedStyle(document.documentElement);
+  const accent = css.getPropertyValue('--accent').trim() || '#3B82F6';
+  const accent2 = css.getPropertyValue('--accent2').trim() || '#14B8A6';
+  const warning = css.getPropertyValue('--warning').trim() || '#F59E0B';
+  const danger = css.getPropertyValue('--danger').trim() || '#F87171';
+  const success = css.getPropertyValue('--success').trim() || '#22C55E';
   
   // Colores de alto contraste garantizado para AMBOS temas
   const theme = {
@@ -2169,7 +2199,18 @@ function renderStats() {
     border: isDark ? '#131621' : '#ffffff'
   };
 
-  const chartColors = ['#6C63FF', '#00D4AA', '#FF6B8A', '#FFB547', '#4ADE80', '#60A5FA', '#A78BFA', '#FB923C', '#2DD4BF', '#F87171'];
+  const chartColors = [
+    accent,
+    accent2,
+    warning,
+    success,
+    danger,
+    adjustColorBrightness(accent, 16),
+    adjustColorBrightness(accent2, 16),
+    adjustColorBrightness(accent, -12),
+    adjustColorBrightness(accent2, -12),
+    adjustColorBrightness(danger, 6)
+  ];
 
   // Chart 1: Types (Donut)
   new Chart($('typeChart'), {
@@ -2205,9 +2246,9 @@ function renderStats() {
       datasets: [{
         label: 'Ausencias',
         data: sortedDates.map(d => dailyData[d]),
-        borderColor: '#6C63FF',
-        backgroundColor: isDark ? 'rgba(108, 99, 255, 0.25)' : 'rgba(108, 99, 255, 0.15)',
-        fill: true, tension: 0.4, pointRadius: 5, pointBackgroundColor: '#6C63FF'
+        borderColor: accent,
+        backgroundColor: hexToRgba(accent, isDark ? 0.25 : 0.15),
+        fill: true, tension: 0.4, pointRadius: 5, pointBackgroundColor: accent
       }]
     },
     options: {
@@ -2232,8 +2273,8 @@ function renderStats() {
       datasets: [{
         label: 'Días',
         data: topEmps.map(e => e[1]),
-        backgroundColor: isDark ? 'rgba(0, 212, 170, 0.5)' : 'rgba(0, 212, 170, 0.7)',
-        borderColor: '#00D4AA', borderWidth: 1.5, borderRadius: 4
+        backgroundColor: hexToRgba(accent2, isDark ? 0.5 : 0.68),
+        borderColor: accent2, borderWidth: 1.5, borderRadius: 4
       }]
     },
     options: {
@@ -3066,32 +3107,33 @@ const FichajesModule = {
       });
 
     if (activePeers.length === 0) {
-      radarList.innerHTML = '<div style="color:var(--text-muted); font-size:0.75rem; text-align:center; padding: 10px 0;">Nadie conectado en la empresa.</div>';
+      radarList.innerHTML = '<div class="radar-empty">Nadie conectado en la empresa.</div>';
     } else {
       // Mostrar top 5 disponibles
       activePeers.slice(0, 5).forEach(emp => {
         const name = `${emp.firstName || ''} ${emp.lastName || ''}`.trim() || 'Compañero';
         const initials = name.split(' ').map(n=>n[0]).join('').toUpperCase().slice(0,2);
         const isWorking = emp.status === 'work';
-        const dotColor = isWorking ? '#22c55e' : '#f59e0b'; // Verde o Naranja
+        const css = getComputedStyle(document.documentElement);
+        const dotColor = isWorking
+          ? (css.getPropertyValue('--accent').trim() || '#3B82F6')
+          : (css.getPropertyValue('--warning').trim() || '#F59E0B');
         const statusText = isWorking ? 'Trabajando' : 'En pausa';
         
         const avatar = emp.imageProfileURL 
-          ? `<img src="${emp.imageProfileURL}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;">`
-          : `<div style="width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: white; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: bold;">${initials}</div>`;
+          ? `<div class="radar-avatar"><img src="${emp.imageProfileURL}" alt="${name}"></div>`
+          : `<div class="radar-avatar">${initials}</div>`;
 
         radarList.innerHTML += `
-          <div style="display: flex; align-items: center; justify-content: space-between; padding: 4px 0;">
-            <div style="display: flex; align-items: center; gap: 8px;">
-              <div style="position: relative;">
+          <div class="radar-item">
+            <div class="radar-item-main">
+              <div class="radar-avatar-wrap">
                 ${avatar}
-                <div style="position: absolute; bottom: -2px; right: -2px; width: 10px; height: 10px; background: ${dotColor}; border-radius: 50%; border: 2px solid var(--bg-surface);"></div>
+                <div class="radar-status-dot" style="background:${dotColor};"></div>
               </div>
-              <div style="font-size: 0.75rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 110px;">
-                ${name}
-              </div>
+              <div class="radar-name">${name}</div>
             </div>
-            <span style="font-size: 0.65rem; color: var(--text-muted);">${statusText}</span>
+            <span class="radar-status-label">${statusText}</span>
           </div>
         `;
       });
@@ -3763,8 +3805,8 @@ async function showContactCard(employeeId) {
           ${emp.email ? `
             <a href="mailto:${emp.email}" class="contact-info-item">
               <span>📧</span>
-              <div style="flex:1">
-                <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;">Email</div>
+              <div class="contact-meta">
+                <div class="contact-meta-label">Email</div>
                 <div>${emp.email}</div>
               </div>
             </a>
@@ -3772,16 +3814,16 @@ async function showContactCard(employeeId) {
           ${emp.phone ? `
             <a href="tel:${emp.phone}" class="contact-info-item">
               <span>📱</span>
-              <div style="flex:1">
-                <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;">Teléfono</div>
+              <div class="contact-meta">
+                <div class="contact-meta-label">Teléfono</div>
                 <div>${emp.phone}</div>
               </div>
             </a>
           ` : ''}
           <div class="contact-info-item">
             <span>🏢</span>
-            <div style="flex:1">
-              <div style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 2px;">Empresa</div>
+            <div class="contact-meta">
+              <div class="contact-meta-label">Empresa</div>
               <div>${STATE.companies.find(c => String(c.companyId || c.id) === String(STATE.companyId))?.name || 'Mi Empresa'}</div>
             </div>
           </div>

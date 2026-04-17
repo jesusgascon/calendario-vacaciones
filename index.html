@@ -1,5 +1,13 @@
 <!DOCTYPE html>
 <html lang="es">
+<!--
+  =============================================================================
+  INDEX.HTML - INTERFAZ DE USUARIO PRINCIPAL DEL PROYECTO
+  =============================================================================
+  Este archivo contiene toda la estructura de la aplicación (Single Page Application - SPA).
+  La aplicación no recarga entre vistas, sino que usa JavaScript (app.js) para conmutar clases CSS
+  de forma que oculte (hidden/active) la pantalla de "Login", la "Setup" o las diferentes "Vistas".
+-->
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,7 +15,7 @@
   <meta name="description" content="Panel de control de vacaciones y ausencias del equipo, integrado con Sesame HR." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
   <script>
     // Apply theme as early as possible to avoid dark flash
@@ -19,7 +27,13 @@
 <body>
   
   <!-- ========== LOCK SCREEN ========== -->
+  <!-- 
+    Esta pantalla actúa como un método técnico de protección ligero.
+    Obliga a introducir un CIF autorizado (declarado en app.js) antes de habilitar la carga real.
+    Sirve para evitar que la aplicación consuma la API si no sabemos a qué empresa atacar.
+  -->
   <div id="lock-screen" class="screen active">
+    <!-- El fondo decorativo (blobs) que generan un efcto blur (glassmorphism) -->
     <div class="setup-bg">
       <div class="blob blob-1"></div>
       <div class="blob blob-2"></div>
@@ -58,6 +72,11 @@
   </div>
 
   <!-- ========== SETUP SCREEN ========== -->
+  <!-- 
+    Este panel captura o corrige las credenciales y proxy (Token JWT `USID` y el ID de compañía `CSID`). 
+    Ocurre la primera vez o si nos equivocamos de sesión. 
+    Llama a los métodos `connect()` y guarda la data en persistencia local / server proxy.
+  -->
   <div id="setup-screen" class="screen hidden">
     <div class="setup-bg">
       <div class="blob blob-1"></div>
@@ -141,9 +160,13 @@
   </div>
 
   <!-- ========== MAIN APP ========== -->
+  <!-- 
+    Este es el envoltorio principal de la SPA una vez superadas las medidas de validación. 
+    Contiene la Barra Lateral (<aside>) y el Contenedor Principal (<main>).
+  -->
   <div id="app-screen" class="screen hidden">
 
-    <!-- Sidebar -->
+    <!-- Sidebar: Barra de navegación lateral fija (a la izquierda), colapsable en móvil/opciones de app.js -->
     <aside class="sidebar glass">
       <div class="sidebar-header" id="sidebar-branding">
         <div class="app-logo" id="company-logo-container">📅</div>
@@ -153,7 +176,7 @@
         </div>
       </div>
 
-      <div class="company-manager" style="padding: 0 16px; margin-bottom: 20px;">
+      <div class="company-manager company-manager-main">
         <span class="section-title">Empresa Activa</span>
         <div class="company-control-row">
           <select id="company-select" class="company-dropdown-styled"></select>
@@ -211,7 +234,7 @@
 
       <div id="employee-section" class="sidebar-section">
         <div class="section-header" onclick="toggleSection('employee-section')">
-          <div style="display: flex; align-items: center; gap: 8px;">
+          <div class="section-header-inline">
             <h3 class="section-title" id="emp-filter-title">Empleados</h3>
           </div>
           <div class="section-toggle">
@@ -220,7 +243,7 @@
         </div>
         
         <div class="section-content">
-          <div class="chip-group" style="margin-bottom: 12px;">
+          <div class="chip-group chip-group-spaced">
             <button id="emp-sel-all" class="chip-btn">Todos</button>
             <button id="emp-sel-none" class="chip-btn">Ninguno</button>
           </div>
@@ -256,28 +279,28 @@
           </div>
           
           <!-- Nuevo: Widget Patrones -->
-          <div id="patterns-widget" class="profile-widget glass-sm mt-10" style="display:none;">
+          <div id="patterns-widget" class="profile-widget glass-sm mt-10 hidden">
             <div class="widget-header">
               <span class="widget-title">Mis Patrones (Semana)</span>
             </div>
-            <div style="font-size: 0.8rem; margin-top: 12px; display: flex; flex-direction: column; gap: 10px;">
-              <div style="display: flex; flex-direction: column; gap: 2px;">
-                <span style="color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;">Hora Media Entrada</span>
-                <span id="pattern-avg-in" style="font-weight: 600; font-size: 0.9rem; color: var(--text-main);">--:--</span>
+            <div class="helper-stack mt-10">
+              <div class="metric-stack">
+                <span class="metric-caption">Hora Media Entrada</span>
+                <span id="pattern-avg-in" class="metric-value">--:--</span>
               </div>
-              <div style="display: flex; flex-direction: column; gap: 2px;">
-                <span style="color: var(--text-muted); font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.5px;">Jornada más larga</span>
-                <span id="pattern-max-day" style="font-weight: 500; color: var(--text-main);">--</span>
+              <div class="metric-stack">
+                <span class="metric-caption">Jornada más larga</span>
+                <span id="pattern-max-day" class="metric-value">--</span>
               </div>
             </div>
           </div>
 
           <!-- Nuevo: Widget Radar -->
-          <div id="radar-widget" class="profile-widget glass-sm mt-10" style="display:none;">
-            <div class="widget-header" style="margin-bottom: 8px;">
+          <div id="radar-widget" class="profile-widget glass-sm mt-10 hidden">
+            <div class="widget-header mb-8">
               <span class="widget-title">Radar de Disponibilidad</span>
             </div>
-            <div id="radar-list" style="display: flex; flex-direction: column; gap: 8px;">
+            <div id="radar-list" class="radar-list">
               <!-- Se rellena por JS -->
             </div>
           </div>
@@ -307,13 +330,14 @@
       </footer>
     </aside>
 
-    <!-- Main content -->
+    <!-- Main content: El lienzo derecho donde ocurre toda la iteración de datos -->
     <main class="main-content">
       
-      <!-- VACACIONES MODULE WRAPPER -->
+      <!-- WRAPPER: VACACIONES -->
+      <!-- Es uno de los dos módulos mayores (Vacaciones o Fichajes), gestionado por la clase .active -->
       <div id="module-vacaciones-wrapper" class="module-wrapper active">
 
-      <!-- Header bar -->
+      <!-- Cabecera principal (Top Bar) incluye título, filtro de meses, cambiar de vistas (Día/Mes/Semana) -->
       <header class="top-bar">
         <div class="top-bar-left">
           <button id="sidebar-toggle" class="btn-icon-round sidebar-toggle-btn" title="Alternar barra lateral">
@@ -342,7 +366,8 @@
         </div>
       </header>
 
-      <!-- Views -->
+      <!-- Views: Diferentes "pestañas" o formatos para ver la misma data elegida en el Sidebar -->
+      <!-- VISTA #1: Calendario tipo rejilla -->
       <div id="view-calendar" class="view active">
         <!-- Calendar grid -->
         <div class="calendar-wrapper">
@@ -357,10 +382,12 @@
         </div>
       </div>
 
+      <!-- VISTA #2: Listado textual, útil para móviles o si queremos buscar de forma lineal -->
       <div id="view-list" class="view hidden">
         <div id="employee-list-container" class="employee-list"></div>
       </div>
 
+      <!-- VISTA #3: Estadísticas / Balance gráfico (utilizando Chart.js u otros widgets insertados por javascript) -->
       <div id="view-stats" class="view hidden">
         <div id="stats-container" class="stats-grid"></div>
       </div>
@@ -368,7 +395,7 @@
       </div> <!-- End module-vacaciones-wrapper -->
 
       <!-- VACACIONES MODULE FISCHAJES -->
-      <div id="module-fichajes-wrapper" class="module-wrapper" style="display: none;">
+      <div id="module-fichajes-wrapper" class="module-wrapper hidden">
         <header class="top-bar">
           <div class="top-bar-left">
             <button id="sidebar-toggle-fichajes" class="btn-icon-round sidebar-toggle-btn" title="Alternar barra lateral">
@@ -377,14 +404,14 @@
             <div class="month-nav">
               <button id="prev-month-signings" class="btn-icon-round">‹</button>
               <div class="current-period">
-                <div style="display: flex; align-items: center; gap: 12px;">
-                  <h2 id="current-month-signings" style="font-size: 1.15rem; margin: 0;">Abril 2026</h2>
-                  <span id="profiles-count-badge" class="badge-subtle" style="display:none; font-size: 10px; padding: 2px 8px; border-radius: 10px; background: var(--bg-surface); border: 1px solid var(--border); color: var(--text-muted);">
+                <div class="header-inline-group">
+                  <h2 id="current-month-signings">Abril 2026</h2>
+                  <span id="profiles-count-badge" class="badge-subtle hidden">
                     👤 Cargando directorio...
                   </span>
                 </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span id="signings-pill" class="pill" style="font-weight: 700; color: var(--accent);"><span id="total-worked-hours">0h 0m</span> / <span id="total-theoretic-hours">0h 0m</span></span>
+                <div class="section-header-inline">
+                  <span id="signings-pill" class="pill pill-accent"><span id="total-worked-hours">0h 0m</span> / <span id="total-theoretic-hours">0h 0m</span></span>
                   <div id="live-presence-summary" class="live-stats-badge hidden">
                     <button id="filter-live-working" class="stats-btn" title="Ver solo trabajando ahora">
                       <span class="dot green"></span> <span id="live-count-working">0</span>
@@ -400,25 +427,25 @@
           </div>
           
           <div class="header-actions">
-            <button id="today-signings" class="btn-secondary" style="font-size: 0.75rem; padding: 4px 10px;">Hoy</button>
+            <button id="today-signings" class="btn-secondary btn-compact">Hoy</button>
             
-            <div class="view-toggle" id="fichajes-view-toggle" style="margin: 0 5px;">
+            <div class="view-toggle mx-5" id="fichajes-view-toggle">
               <button class="vt-btn active" data-fichaje-view="month">Mes</button>
               <button class="vt-btn" data-fichaje-view="week">Semana</button>
               <button class="vt-btn" data-fichaje-view="day">Día</button>
             </div>
 
-            <div class="search-group-signings" style="display: flex; align-items: center; gap: 6px; padding: 0 10px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); margin: 0 5px;">
-              <input type="text" id="signings-employee-search" placeholder="🔍 Buscar..." class="beautiful-input-sm" style="width: 120px; height: 32px; font-size: 0.8rem;">
-              <select id="signings-employee-select" class="beautiful-select" style="width: 160px; height: 32px; font-size: 0.8rem; padding: 0 10px;">
+            <div class="search-group-signings toolbar-divider-group">
+              <input type="text" id="signings-employee-search" placeholder="🔍 Buscar..." class="beautiful-input-sm toolbar-input-sm">
+              <select id="signings-employee-select" class="beautiful-select toolbar-select-sm">
                 <option value="all">👥 Ver a todo el equipo</option>
               </select>
-              <button id="btn-show-multi-filter" class="btn-secondary" style="font-size: 0.65rem; padding: 4px 8px; height: 32px; border-radius: 8px; white-space: nowrap;" title="Seleccionar varios compañeros en el panel lateral">
+              <button id="btn-show-multi-filter" class="btn-secondary btn-xs" title="Seleccionar varios compañeros en el panel lateral">
                 Varios...
               </button>
             </div>
 
-            <div class="icon-actions-group" style="display: flex; align-items: center; gap: 4px;">
+            <div class="icon-actions-group icon-actions-row">
               <button id="kiosko-mode-btn" class="btn-icon-round" title="Modo Kiosko (Vista de oficina)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line></svg>
               </button>
@@ -495,6 +522,10 @@
   </div>
 
   <!-- ========== DAY DETAIL MODAL ========== -->
+  <!-- 
+    Ventana flotante emergente usada cuando el usuario hace clic 
+    en un día del calendario para ver quiénes están ausentes en detalle.
+  -->
   <div id="day-modal" class="modal-overlay hidden">
     <div class="modal glass">
       <div class="modal-header">
