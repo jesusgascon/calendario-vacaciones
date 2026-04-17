@@ -224,6 +224,24 @@ function clearCredentials() {
 }
 
 // ── API layer ──────────────────────────────────────────────────────────────
+/**
+ * =========================================================================
+ * CAPA DE RED (API LAYER): `apiFetch` y `apiFetchBi`
+ * =========================================================================
+ * Esta es la columna vertebral de comunicaciones del Dashboard.
+ * Intercepta todas las llamadas y, en lugar de contactar a `api.sesametime.com`
+ * que rebotaría por política CORS si se llama desde `localhost`, las dirige al 
+ * proxy backend local (`/sesame-api/`) o las envía directas si se está en un server
+ * montado sobre Nginx/Apache con dominiatura autorizada.
+ * 
+ * ¿Por qué esta estructura asíncrona?
+ * - Provee retries manuales si el token falla.
+ * - Centraliza toda la inyección de Headers (CSID, USID, Región).
+ * - Enlaza íntimamente con el subsistema `AUDIT` local, que contabiliza las 
+ *   veces que Sesame deniega acceso 403 a comprobaciones de terceros para "replegarse"
+ *   y dejar de hacer spam al servidor para no levantar baneos de IP en el WAF.
+ * =========================================================================
+ */
 async function apiFetch(path, params = {}, isRetry = false) {
   // 1. Determinar el servidor de Sesame objetivo (Redundancia)
   let sesameBaseUrl = STATE.backendUrl || 'https://back-eu1.sesametime.com';
@@ -417,6 +435,11 @@ function normalizeSigningType(rawType) {
 }
 
 
+/**
+ * Recupera el perfil del empleado actual (quien ha iniciado el token).
+ * Es fundamental para saber a quién aplicar self-restrictions o resaltados 
+ * visuales de "tú" en el listado de personas y calendarios.
+ */
 async function fetchMe() {
   const data = await apiFetch('/api/v3/security/me');
   return data.data || data;
@@ -431,6 +454,12 @@ const PREMIUM_PALETTE = [
   '#0369A1', '#854D0E', '#991B1B', '#4338CA', '#0F766E'
 ];
 
+/**
+ * Extrae la definición de "tipos de ausencia" que la compañía tiene guardados (Vacaciones, Baja, Médito...).
+ * Además, inyecta nuestra tabla de colores `PREMIUM_PALETTE` de forma secuencial 
+ * para garantizar que la UI reciba los perfiles codificados por un color corporativo muy llamativo 
+ * y no los clásicos grises que devuelve Sesame.
+ */
 async function fetchAbsenceTypes() {
   const data = await apiFetch(`/api/v3/companies/${STATE.companyId}/absence-types`);
   const list = data.data || data || [];
@@ -445,6 +474,12 @@ async function fetchAbsenceTypes() {
   });
 }
 
+/**
+ * Solicita los eventos de calendario de ausencias.
+ * El endpoint devuelve qué días alguien está ausente o tiene horas en una ausencia aprobada.
+ * Esta es la columna vertebral de "datos" para el calendario dibujado en la UI (Month y Week View).
+ * Agrupa los resultados bajo la vista = 'employee' optimizando la sobrecarga.
+ */
 async function fetchCalendarGrouped(from, to, typeIds) {
   const params = {
     from, to,
@@ -458,6 +493,12 @@ async function fetchCalendarGrouped(from, to, typeIds) {
   return data.data || data || [];
 }
 
+/**
+ * Extrae el estado actual en tiempo real (trabajando, pausa, ausente...) de cada persona del equipo.
+ * Depende en gran medida del framework `DISCOVERY`. La estructura corporativa de Sesame bloquea masivamente a
+ * ciertos usuarios al intentar ver "presencia". El loop auto-adapta qué endpoint usar o se suspende (DISABLED)
+ * para no incurrir en bloqueos por WAF temporal en la IP de la oficina.
+ */
 async function fetchPresence() {
   try {
     if (DISCOVERY.workingPresence === 'DISABLED') return [];
@@ -568,6 +609,11 @@ async function fetchVacationBalance(employeeId) {
   }
 }
 
+/**
+ * Consulta de listado completo de la corporación. Unifica a todos los contactos e inicializa su
+ * "state object". Extrae, si está disponible, sus contratos de horas para calcular su tiempo base
+ * teórico semanal, y luego extrae sus avatares o fechas de contratación y alta.
+ */
 async function fetchEmployees() {
   try {
     // 1. Intentamos el directorio global (tradicionalmente con más permisos)
