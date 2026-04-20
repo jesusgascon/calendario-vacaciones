@@ -224,7 +224,7 @@ body {
   color: var(--accent);
   font-size: 0.65rem;
   font-weight: 800;
-  padding: 11px 24px;
+  padding: 12px 20px !important;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   border-bottom: 1px solid var(--border);
@@ -232,12 +232,23 @@ body {
 }
 
 .details-tech-table td {
-  padding: 11px 24px;
+  padding: 12px 20px !important;
   border-bottom: 1px solid var(--border);
   color: var(--text-primary);
   font-size: 0.875rem;
   white-space: nowrap;
   transition: background 0.15s ease;
+}
+
+/* Extra espacio en primera y última columna para no pegar con el borde */
+.details-tech-table th:first-child,
+.details-tech-table td:first-child {
+  padding-left: 24px !important;
+}
+
+.details-tech-table th:last-child,
+.details-tech-table td:last-child {
+  padding-right: 24px !important;
 }
 
 .details-tech-table tbody tr:last-child td { border-bottom: none; }
