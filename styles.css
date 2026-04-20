@@ -53,6 +53,43 @@
   --accent2-glow:  #00b38f20;
 }
 
+/* Overrides para el tema claro en el panel de detalles de fichajes */
+[data-theme="light"] .details-container {
+  background: #f8f9fb;
+}
+
+[data-theme="light"] .row-details td {
+  background: #f8f9fb;
+}
+
+[data-theme="light"] .row-details.active td {
+  background: rgba(90, 82, 230, 0.04);
+}
+
+[data-theme="light"] .details-tech-table {
+  background: #ffffff;
+  border-color: rgba(0,0,0,0.1);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+[data-theme="light"] .details-tech-table thead tr {
+  background: rgba(90, 82, 230, 0.06);
+}
+
+[data-theme="light"] .details-tech-table td {
+  border-bottom-color: rgba(0,0,0,0.06);
+}
+
+[data-theme="light"] .details-tech-table tbody tr:hover td {
+  background: rgba(90, 82, 230, 0.04);
+}
+
+[data-theme="light"] .signings-stats-panel {
+  background: #ffffff;
+  border-color: rgba(0,0,0,0.1);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 html { font-size: 15px; }
@@ -136,7 +173,7 @@ body {
   flex-direction: column;
   gap: 16px;
   padding: 20px 24px;
-  background: linear-gradient(135deg, rgba(13,15,23,0.98), rgba(19,22,33,0.95));
+  background: var(--bg-dark);
   border-top: 1px solid var(--border);
   width: 100%;
   box-sizing: border-box;
