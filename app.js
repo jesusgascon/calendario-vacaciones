@@ -3431,12 +3431,15 @@ const FichajesModule = {
       if (isSingleUser) {
         // MODO INDIVIDUAL: Mostrar estado detallado del seleccionado
         const emp = STATE.allEmployees.get(selectedId);
-        const presenceStatus = STATE.presenceMap.get(selectedId) || 'out';
         
         if (emp) {
-          const status = String(presenceStatus).toLowerCase();
-          const isWorking = status === 'work' || status === 'working';
-          const isPaused = status === 'pause' || status === 'paused';
+          // Buscamos el estado en varias fuentes posibles para máxima compatibilidad
+          const statusRaw = STATE.presenceMap.get(selectedId) || emp.workStatus || emp.status || 'out';
+          const status = String(statusRaw).toLowerCase();
+          
+          const isWorking = status === 'work' || status === 'working' || status === 'online';
+          const isPaused = status === 'pause' || status === 'paused' || status === 'break';
+          
           const dotColor = isWorking ? '#22c55e' : (isPaused ? '#f59e0b' : '#ef4444');
           const statusText = isWorking ? 'Trabajando' : (isPaused ? 'En pausa' : 'Desconectado');
           
@@ -3458,14 +3461,15 @@ const FichajesModule = {
         const activePeers = Array.from(STATE.allEmployees.values())
           .filter(emp => {
             if (!emp.id || String(emp.id) === meId) return false;
-            const status = STATE.presenceMap.get(String(emp.id)) || 'out';
-            return status === 'work' || status === 'working' || status === 'pause' || status === 'paused';
+            const sRaw = STATE.presenceMap.get(String(emp.id)) || emp.workStatus || emp.status || 'out';
+            const s = String(sRaw).toLowerCase();
+            return s === 'work' || s === 'working' || s === 'pause' || s === 'paused' || s === 'online' || s === 'break';
           })
           .sort((a, b) => {
-            const sA = STATE.presenceMap.get(String(a.id)) || 'out';
-            const sB = STATE.presenceMap.get(String(b.id)) || 'out';
-            const isWA = sA === 'work' || sA === 'working';
-            const isWB = sB === 'work' || sB === 'working';
+            const sA = String(STATE.presenceMap.get(String(a.id)) || a.workStatus || a.status || 'out').toLowerCase();
+            const sB = String(STATE.presenceMap.get(String(b.id)) || b.workStatus || b.status || 'out').toLowerCase();
+            const isWA = sA === 'work' || sA === 'working' || sA === 'online';
+            const isWB = sB === 'work' || sB === 'working' || sB === 'online';
             if (isWA && !isWB) return -1;
             if (!isWA && isWB) return 1;
             return (a.firstName || '').localeCompare(b.firstName || '');
@@ -3475,8 +3479,9 @@ const FichajesModule = {
           radarList.innerHTML = '<div class="insight-empty">Nadie conectado en la empresa.</div>';
         } else {
           activePeers.slice(0, 5).forEach(emp => {
-            const status = STATE.presenceMap.get(String(emp.id)) || 'out';
-            const isWorking = status === 'work' || status === 'working';
+            const sRaw = STATE.presenceMap.get(String(emp.id)) || emp.workStatus || emp.status || 'out';
+            const s = String(sRaw).toLowerCase();
+            const isWorking = s === 'work' || s === 'working' || s === 'online';
             const dotColor = isWorking ? '#22c55e' : '#f59e0b';
             radarList.innerHTML += `
               <div class="insight-line">
