@@ -2601,3 +2601,223 @@ body.kiosko-mode-active #current-month-signings {
 }
 
 .mt-10 { margin-top: 10px; }
+
+/* ============================================================
+   BIRTHDAYS FEATURE STYLES
+   ============================================================ */
+.birthday-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 10px 0;
+}
+
+.birthday-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.section-subtitle {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.birthday-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.birthday-card {
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: all 0.3s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.birthday-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 20px rgba(0,0,0,0.2);
+}
+
+.birthday-card.is-today {
+  background: linear-gradient(135deg, rgba(108, 99, 255, 0.1), rgba(0, 212, 170, 0.1));
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.birthday-card.is-today::before {
+  content: '🎉';
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  font-size: 1.5rem;
+  opacity: 0.5;
+  transform: rotate(15deg);
+}
+
+.birthday-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--border);
+}
+
+.birthday-card.is-today .birthday-avatar {
+  border-color: var(--accent);
+  padding: 2px;
+}
+
+.birthday-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.birthday-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.birthday-date {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.birthday-date small {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.birthday-list-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.birthday-list-compact .birthday-card {
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+}
+
+.birthday-list-compact .birthday-avatar {
+  width: 32px;
+  height: 32px;
+}
+
+.empty-state {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Responsive adjustment for birthday grid */
+@media (max-width: 600px) {
+  .birthday-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   BIRTHDAY FULL YEAR VIEW
+   ============================================================ */
+.birthday-full-year {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding-right: 10px;
+}
+
+.birthday-month-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.birthday-month-group.current-month {
+  background: rgba(var(--accent-rgb), 0.03);
+  border-radius: var(--radius-md);
+  padding: 15px;
+  border: 1px dashed var(--accent);
+}
+
+.month-title {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--accent);
+  text-transform: capitalize;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 5px;
+}
+
+.birthday-full-year::-webkit-scrollbar {
+  width: 6px;
+}
+
+.birthday-full-year::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 10px;
+}
+
+/* ============================================================
+   SYNC INDICATORS
+   ============================================================ */
+.sync-loader {
+  margin-top: 15px;
+  font-size: 0.8rem;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.sync-banner {
+  background: var(--accent-glow);
+  color: var(--accent);
+  padding: 8px 15px;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 20px;
+  border: 1px solid var(--accent);
+  animation: fadeIn 0.3s ease;
+}
+
+.spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--accent);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

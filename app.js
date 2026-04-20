@@ -525,12 +525,12 @@ async function fetchVacationBalance(employeeId) {
 async function fetchEmployees() {
   try {
     // 1. Intentamos el directorio global (tradicionalmente con más permisos)
-    let data = await apiFetch(`/api/v3/employees?limit=500`);
+    let data = await apiFetch(`/api/v3/employees?limit=500&include=personalData,details`);
     let results = data.data || data || [];
 
     // 2. Fallback final: endpoint de empresa
     if (results.length <= 1) {
-      const companyData = await apiFetch(`/api/v3/companies/${STATE.companyId}/employees?limit=500`);
+      const companyData = await apiFetch(`/api/v3/companies/${STATE.companyId}/employees?limit=500&include=personalData,details`);
       results = companyData.data || companyData || [];
     }
 
@@ -555,10 +555,12 @@ async function fetchEmployees() {
         email: e.email || e.companyEmail || '',
         phone: e.personalPhone || e.companyPhone || e.phone || '',
         jobTitle: e.jobTitle || e.position?.name || '',
-        birthDate: e.birthDate || e.birthday || e.dateOfBirth || e.date_of_birth || '',
+        birthDate: e.birthDate || e.birthday || e.dateOfBirth || e.date_of_birth || 
+                   (e.personalData && (e.personalData.birthDate || e.personalData.birthday)) || 
+                   (e.details && e.details.birthDate) || '',
         hiringDate: e.hiringDate || e.dateOfJoined || e.joinedDate || e.createdAt || '',
         workdays: workdays,
-        status: e.status // Proporcionado por el endpoint de presencia si se mezcla después
+        status: e.status 
       };
     });
   } catch (e) {
@@ -2521,6 +2523,22 @@ const FichajesModule = {
         document.body.classList.remove('kiosko-mode-active');
       }
     });
+
+    // Botón de Cumpleaños
+    document.getElementById('birthdays-btn')?.addEventListener('click', () => {
+      this.showBirthdaysModal();
+    });
+
+    document.getElementById('birthdays-modal-close')?.addEventListener('click', () => {
+      document.getElementById('birthdays-modal').classList.add('hidden');
+    });
+
+    // Cerrar modal al hacer clic fuera
+    document.getElementById('birthdays-modal')?.addEventListener('click', (e) => {
+      if (e.target.id === 'birthdays-modal') {
+        e.target.classList.add('hidden');
+      }
+    });
   },
 
   togglePresenceFilter(type) {
@@ -2571,6 +2589,200 @@ const FichajesModule = {
     } else {
       el.textContent = this.currentDate.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
     }
+  },
+
+  showBirthdaysModal() {
+    const modal = document.getElementById('birthdays-modal');
+    const dateDisplay = document.getElementById('current-date-display');
+    if (!modal) return;
+
+    const today = new Date();
+    if (dateDisplay) {
+      dateDisplay.textContent = today.toLocaleDateString('es-ES', { 
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' 
+      });
+    }
+
+    this.renderBirthdays();
+    modal.classList.remove('hidden');
+
+    // Intentar carga profunda si no hay datos o para asegurar frescura
+    this.fetchBirthdaysBI();
+  },
+
+  async fetchBirthdaysBI() {
+    try {
+      console.log("Deep Birthday Harvest started...");
+      const res = await apiFetchBi({
+        "from": "core_context_employee",
+        "select": [
+          {"field": "core_context_employee.id", "alias": "id"},
+          {"field": "core_context_employee.name", "alias": "name"},
+          {"field": "core_context_employee.birth_date", "alias": "birthDate"},
+          {"field": "core_context_employee.birthday", "alias": "birthday"},
+          {"field": "core_context_employee.date_of_birth", "alias": "dob"},
+          {"field": "core_context_employee.image_profile_url", "alias": "photo"}
+        ],
+        "limit": 1000
+      });
+
+      const raw = res.data || res || [];
+      let updatedCount = 0;
+      raw.forEach(row => {
+        const bDate = row.birthDate || row.birthday || row.dob;
+        if (row.id && bDate) {
+          const emp = STATE.allEmployees.get(String(row.id));
+          if (emp) {
+            emp.birthDate = bDate;
+            if (row.photo && !emp.imageProfileURL) emp.imageProfileURL = row.photo;
+            updatedCount++;
+          } else {
+            upsertEmployee({
+              id: row.id,
+              firstName: row.name,
+              birthDate: bDate,
+              imageProfileURL: row.photo
+            });
+            updatedCount++;
+          }
+        }
+      });
+
+      if (updatedCount > 0) {
+        console.log(`Deep Birthday Harvest: Updated ${updatedCount} profiles.`);
+        this.renderBirthdays(); 
+      }
+
+      // Si después del BI seguimos sin datos, iniciamos escaneo serial (uno a uno)
+      // Solo para los empleados que no tengan fecha y máximo 50 para no saturar
+      this.startSerialBirthdayScan();
+
+    } catch (e) {
+      console.warn("Deep Birthday Harvest failed:", e);
+      this.startSerialBirthdayScan();
+    }
+  },
+
+  async startSerialBirthdayScan() {
+    if (this.isScanning) return;
+    this.isScanning = true;
+
+    const employees = Array.from(STATE.allEmployees.values())
+      .filter(e => !e.birthDate)
+      .slice(0, 40); // Limitamos a 40 para evitar baneo del WAF
+
+    console.log(`Serial Scan: ${employees.length} candidates.`);
+    
+    for (const emp of employees) {
+      if (!this.isScanning) break;
+      try {
+        // Pequeña pausa para no saturar el WAF
+        await new Promise(r => setTimeout(r, 500));
+        
+        const res = await apiFetch(`/api/v3/employees/${emp.id}`);
+        const full = res.data || res;
+        // IGUAL que showContactCard: siempre upsertear si el perfil tiene id
+        // upsertEmployee extrae birthDate de campos anidados (personalData.birthDate, etc.)
+        if (full && full.id) {
+          upsertEmployee(full);
+          // Re-renderizar si ahora tiene birthDate (lo detecta upsertEmployee)
+          const updated = STATE.allEmployees.get(String(full.id));
+          if (updated && updated.birthDate) {
+            this.renderBirthdays();
+          }
+        }
+      } catch (e) {
+        console.warn(`Serial Scan failed for ${emp.id}:`, e);
+      }
+    }
+    this.isScanning = false;
+    this.renderBirthdays(); // Renderizado final al completar
+  },
+
+  renderBirthdays() {
+    const container = document.getElementById('birthdays-modal-body');
+    if (!container) return;
+
+    const employees = Array.from(STATE.allEmployees.values());
+    const today = new Date();
+    const currentMonth = today.getMonth() + 1;
+    const currentDay = today.getDate();
+
+    // Procesar todos los empleados que tengan fecha de nacimiento
+    const birthdayList = employees
+      .map(emp => {
+        if (!emp.birthDate) return null;
+        const d = new Date(emp.birthDate);
+        if (isNaN(d.getTime())) return null;
+
+        const bMonth = d.getMonth() + 1;
+        const bDay = d.getDate();
+
+        return {
+          ...emp,
+          bMonth,
+          bDay,
+          isToday: bMonth === currentMonth && bDay === currentDay
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => {
+        if (a.bMonth !== b.bMonth) return a.bMonth - b.bMonth;
+        return a.bDay - b.bDay;
+      });
+
+    if (birthdayList.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p>No hay datos de cumpleaños disponibles.</p>
+          ${this.isScanning ? '<div class="sync-loader"><span class="spinner-sm"></span> Sincronizando datos profundos...</div>' : ''}
+        </div>`;
+      return;
+    }
+
+    let html = '<div class="birthday-full-year">';
+    
+    if (this.isScanning) {
+      html += `
+        <div class="sync-banner">
+          <span class="spinner-sm"></span> 
+          <span>Sincronizando perfiles... (${birthdayList.length} encontrados)</span>
+        </div>
+      `;
+    }
+
+    // Agrupar por mes
+    for (let m = 1; m <= 12; m++) {
+      const monthEmps = birthdayList.filter(b => b.bMonth === m);
+      if (monthEmps.length === 0) continue;
+
+      html += `
+        <div class="birthday-month-group ${m === currentMonth ? 'current-month' : ''}">
+          <h4 class="month-title">${MONTHS_ES[m-1]}</h4>
+          <div class="birthday-list-compact">
+            ${monthEmps.map(emp => this.renderBirthdayCard(emp, emp.isToday)).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    html += '</div>';
+    container.innerHTML = html;
+  },
+
+  renderBirthdayCard(emp, isToday) {
+    const photo = emp.imageProfileURL || 'https://ui-avatars.com/api/?name=' + encodeURIComponent(emp.firstName + ' ' + (emp.lastName || '')) + '&background=random';
+    const dateStr = `${emp.bDay} de ${MONTHS_ES[emp.bMonth - 1]}`;
+
+    return `
+      <div class="birthday-card ${isToday ? 'is-today' : ''}">
+        <img src="${photo}" alt="${emp.firstName}" class="birthday-avatar">
+        <div class="birthday-info">
+          <span class="birthday-name">${emp.firstName} ${emp.lastName || ''}</span>
+          <span class="birthday-date">${dateStr} ${isToday ? '🎉' : ''}</span>
+        </div>
+      </div>
+    `;
   },
   
   async loadData() {

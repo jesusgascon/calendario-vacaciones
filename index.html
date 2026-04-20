@@ -430,6 +430,9 @@
                 <span style="font-size: 10px; font-weight: 800;">{ }</span>
               </button>
               <button id="theme-btn-signings" class="theme-toggle btn-icon-round" title="Cambiar tema">🌙</button>
+              <button id="birthdays-btn" class="btn-icon-round" title="Cumpleaños del equipo" style="background: var(--accent-glow); color: var(--accent); border: 1px solid var(--accent);">
+                🎂
+              </button>
               <button id="refresh-signings-btn" class="btn-icon-round" title="Actualizar">🔄</button>
             </div>
           </div>
@@ -496,6 +499,25 @@
       <!-- END FICHAJES MODULE -->
 
     </main>
+  </div>
+
+  <!-- ========== BIRTHDAYS MODAL ========== -->
+  <div id="birthdays-modal" class="modal-overlay hidden">
+    <div class="modal glass" style="max-width: 600px;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <span style="font-size: 1.5rem;">🎂</span>
+          <div>
+            <h3 style="margin: 0;">Cumpleaños del Equipo</h3>
+            <p id="current-date-display" style="margin: 0; font-size: 0.8rem; color: var(--text-muted);"></p>
+          </div>
+        </div>
+        <button id="birthdays-modal-close" class="btn-icon-round">✕</button>
+      </div>
+      <div id="birthdays-modal-body" class="modal-body">
+        <!-- Contenido dinámico -->
+      </div>
+    </div>
   </div>
 
   <!-- ========== DAY DETAIL MODAL ========== -->
