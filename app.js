@@ -3485,8 +3485,10 @@ const FichajesModule = {
       if (isSingleUser) {
         // MODO INDIVIDUAL: Mostrar estado detallado del seleccionado
         const emp = STATE.allEmployees.get(selectedId);
+        const presenceStatus = STATE.presenceMap.get(selectedId) || 'out';
+        
         if (emp) {
-          const status = String(emp.status || 'offline').toLowerCase();
+          const status = String(presenceStatus).toLowerCase();
           const isWorking = status === 'work' || status === 'working';
           const isPaused = status === 'pause' || status === 'paused';
           const dotColor = isWorking ? '#22c55e' : (isPaused ? '#f59e0b' : '#ef4444');
@@ -3508,14 +3510,27 @@ const FichajesModule = {
         // MODO EQUIPO: Lista de compañeros activos (Radar original)
         const meId = String(STATE.currentUser?.id || '');
         const activePeers = Array.from(STATE.allEmployees.values())
-          .filter(emp => emp.id && String(emp.id) !== meId && (emp.status === 'work' || emp.status === 'pause'))
-          .sort((a, b) => (a.status === 'work' ? -1 : 1) || (a.firstName || '').localeCompare(b.firstName || ''));
+          .filter(emp => {
+            if (!emp.id || String(emp.id) === meId) return false;
+            const status = STATE.presenceMap.get(String(emp.id)) || 'out';
+            return status === 'work' || status === 'working' || status === 'pause' || status === 'paused';
+          })
+          .sort((a, b) => {
+            const sA = STATE.presenceMap.get(String(a.id)) || 'out';
+            const sB = STATE.presenceMap.get(String(b.id)) || 'out';
+            const isWA = sA === 'work' || sA === 'working';
+            const isWB = sB === 'work' || sB === 'working';
+            if (isWA && !isWB) return -1;
+            if (!isWA && isWB) return 1;
+            return (a.firstName || '').localeCompare(b.firstName || '');
+          });
 
         if (activePeers.length === 0) {
           radarList.innerHTML = '<div class="insight-empty">Nadie conectado en la empresa.</div>';
         } else {
           activePeers.slice(0, 5).forEach(emp => {
-            const isWorking = emp.status === 'work';
+            const status = STATE.presenceMap.get(String(emp.id)) || 'out';
+            const isWorking = status === 'work' || status === 'working';
             const dotColor = isWorking ? '#22c55e' : '#f59e0b';
             radarList.innerHTML += `
               <div class="insight-line">
