@@ -2867,54 +2867,7 @@ const FichajesModule = {
     pw.style.display = 'block';
     rw.style.display = 'block';
 
-    // 1. Calcular Patrones (Usuario actual)
-    const meId = String(STATE.currentUser?.id);
-    const myData = this.data.filter(d => String(d.employeeId) === meId && !d.isGhost && !d.isLive);
-    
-    let avgIn = '--:--';
-    let maxDay = '--';
-
-    if (myData.length > 0) {
-      // Hora media de entrada
-      let totalMins = 0;
-      let validIns = 0;
-      let maxSeconds = -1;
-      let maxDate = '';
-
-      myData.forEach(d => {
-        // Encontrar primer fichaje de entrada
-        const firstEntry = d.entries && d.entries.find(e => e.in && e.in !== '--:--' && e.type === 'work');
-        if (firstEntry) {
-          const [h, m] = firstEntry.in.split(':').map(Number);
-          if (!isNaN(h) && !isNaN(m)) {
-            totalMins += (h * 60 + m);
-            validIns++;
-          }
-        }
-        
-        // Encontrar día más largo
-        if (d.workedSeconds > maxSeconds) {
-          maxSeconds = d.workedSeconds;
-          maxDate = d.dayName;
-        }
-      });
-
-      if (validIns > 0) {
-        const avgMins = Math.round(totalMins / validIns);
-        const h = Math.floor(avgMins / 60);
-        const m = avgMins % 60;
-        avgIn = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      }
-      
-      if (maxSeconds > 0) {
-        const h = Math.floor(maxSeconds / 3600);
-        const m = Math.floor((maxSeconds % 3600) / 60);
-        maxDay = `${maxDate} (${h}h ${m}m)`;
-      }
-    }
-
-    document.getElementById('pattern-avg-in').textContent = avgIn;
-    document.getElementById('pattern-max-day').textContent = maxDay;
+    // 1. Calcular Patrones (Ahora se hace en renderOperationalInsights para ser reactivo)
 
     // 2. Calcular Radar (Compañeros trabajando AHORA) leyendo de la caché global (más seguro)
     const radarList = document.getElementById('radar-list');
@@ -3589,7 +3542,37 @@ const FichajesModule = {
     setBadge('insight-anomalias-count', anomalies.length);
     setBadge('insight-solicitudes-count', upcoming.length);
 
-    setBody('insight-incidencias-body', incidents.length ? `
+    // --- CÁLCULO DE PATRONES REACTIVOS (Hora Media / Jornada Larga) ---
+    const targetPatternId = isSingleUser ? selectedId : String(STATE.currentUser?.id || '');
+    const patternData = (this.data || []).filter(d => String(d.employeeId) === targetPatternId && !d.isGhost && !d.isLive);
+    
+    let avgIn = '--:--';
+    let maxDay = '--';
+
+    if (patternData.length > 0) {
+      let totalMins = 0, validIns = 0, maxSeconds = -1, maxDate = '';
+      patternData.forEach(d => {
+        const firstEntry = d.entries && d.entries.find(e => e.in && e.in !== '--:--' && e.type === 'work');
+        if (firstEntry) {
+          const [h, m] = firstEntry.in.split(':').map(Number);
+          if (!isNaN(h) && !isNaN(m)) { totalMins += (h * 60 + m); validIns++; }
+        }
+        if (d.workedSeconds > maxSeconds) { maxSeconds = d.workedSeconds; maxDate = d.dayName; }
+      });
+      if (validIns > 0) {
+        const avgMins = Math.round(totalMins / validIns);
+        avgIn = `${String(Math.floor(avgMins/60)).padStart(2,'0')}:${String(avgMins%60).padStart(2,'0')}`;
+      }
+      if (maxSeconds > 0) {
+        maxDay = `${maxDate} (${Math.floor(maxSeconds/3600)}h ${Math.floor((maxSeconds%3600)/60)}m)`;
+      }
+    }
+    const elAvg = document.getElementById('pattern-avg-in');
+    const elMax = document.getElementById('pattern-max-day');
+    if (elAvg) elAvg.textContent = avgIn;
+    if (elMax) elMax.textContent = maxDay;
+
+    // --- CUERPOS DE INSIGHTS ---
       ${incidents.slice(0, 4).map(item => `
         <div class="insight-line">
           <div><strong>${item.label}</strong><br><span>${item.employeeName}</span></div>
