@@ -3483,6 +3483,9 @@ const FichajesModule = {
     const incidents = [];
     const validations = [];
     const anomalies = [];
+    
+    const selectedId = String(this.selectedEmployee || 'all');
+    const isSingleUser = selectedId !== 'all';
 
     rows.forEach(row => {
       const missingCheckout = (row.entries || []).some(e => e.out === '--:--') && !row.isLive;
@@ -3511,22 +3514,75 @@ const FichajesModule = {
       }
     });
 
-    const upcoming = this.buildUpcomingAbsenceItems();
+    // Filtrar solicitudes próximas si hay un usuario seleccionado
+    let upcoming = this.buildUpcomingAbsenceItems();
+    if (isSingleUser) {
+      upcoming = upcoming.filter(u => String(u.employeeId) === selectedId);
+    }
+
     const complianceBase = rows.filter(r => r.theoreticSeconds > 0);
     const compliancePct = complianceBase.length
       ? Math.round(complianceBase.reduce((acc, row) => acc + Math.min(100, Math.round((row.workedSeconds / row.theoreticSeconds) * 100)), 0) / complianceBase.length)
       : 0;
+
+    // --- ACTUALIZACIÓN DEL RADAR ---
+    const radarList = document.getElementById('radar-list');
+    if (radarList) {
+      radarList.innerHTML = '';
+      if (isSingleUser) {
+        // MODO INDIVIDUAL: Mostrar estado detallado del seleccionado
+        const emp = STATE.allEmployees.get(selectedId);
+        if (emp) {
+          const status = String(emp.status || 'offline').toLowerCase();
+          const isWorking = status === 'work' || status === 'working';
+          const isPaused = status === 'pause' || status === 'paused';
+          const dotColor = isWorking ? '#22c55e' : (isPaused ? '#f59e0b' : '#ef4444');
+          const statusText = isWorking ? 'Trabajando' : (isPaused ? 'En pausa' : 'Desconectado');
+          
+          radarList.innerHTML = `
+            <div style="padding: 10px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid var(--border);">
+              <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
+                <div style="width: 12px; height: 12px; background: ${dotColor}; border-radius: 50%; box-shadow: 0 0 8px ${dotColor}66;"></div>
+                <strong style="font-size: 0.85rem; color: var(--text-primary);">${statusText}</strong>
+              </div>
+              <div style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4;">
+                ${isWorking ? 'Actualmente registrando jornada laboral.' : (isPaused ? 'El empleado ha pausado su jornada.' : 'No hay actividad en tiempo real registrada hoy.')}
+              </div>
+            </div>
+          `;
+        }
+      } else {
+        // MODO EQUIPO: Lista de compañeros activos (Radar original)
+        const meId = String(STATE.currentUser?.id || '');
+        const activePeers = Array.from(STATE.allEmployees.values())
+          .filter(emp => emp.id && String(emp.id) !== meId && (emp.status === 'work' || emp.status === 'pause'))
+          .sort((a, b) => (a.status === 'work' ? -1 : 1) || (a.firstName || '').localeCompare(b.firstName || ''));
+
+        if (activePeers.length === 0) {
+          radarList.innerHTML = '<div class="insight-empty">Nadie conectado en la empresa.</div>';
+        } else {
+          activePeers.slice(0, 5).forEach(emp => {
+            const isWorking = emp.status === 'work';
+            const dotColor = isWorking ? '#22c55e' : '#f59e0b';
+            radarList.innerHTML += `
+              <div class="insight-line">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <div style="width: 8px; height: 8px; background: ${dotColor}; border-radius: 50%;"></div>
+                  <span style="font-size: 0.75rem;">${emp.firstName} ${emp.lastName}</span>
+                </div>
+                <span style="font-size: 0.65rem; opacity: 0.6;">${isWorking ? 'Trabajando' : 'Pausa'}</span>
+              </div>
+            `;
+          });
+        }
+      }
+    }
+
+    // Actualizar contadores y cuerpos
     const liveCount = (this.realtimePresence || []).filter(p => ['work', 'working', 'pause', 'paused'].includes(String(p.status || '').toLowerCase())).length;
-
-    const setBadge = (id, value) => {
-      const el = document.getElementById(id);
-      if (el) el.textContent = value;
-    };
-
-    const setBody = (id, html) => {
-      const el = document.getElementById(id);
-      if (el) el.innerHTML = html;
-    };
+    
+    const setBadge = (id, value) => { const el = document.getElementById(id); if (el) el.textContent = value; };
+    const setBody = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
 
     setBadge('insight-incidencias-count', incidents.length);
     setBadge('insight-validaciones-count', validations.length);
@@ -3540,8 +3596,7 @@ const FichajesModule = {
           <span class="insight-tag warning">${item.meta}</span>
         </div>
       `).join('')}
-      <div class="insight-note">Bloque orientado a incidencias oficiales de time tracking. Ahora mismo se alimenta de reglas sobre los fichajes ya visibles.</div>
-    ` : `<div class="insight-empty">No se detectaron incidencias operativas en el rango actual.</div>`);
+    ` : `<div class="insight-empty">Sin incidencias en este rango.</div>`);
 
     setBody('insight-validaciones-body', validations.length ? `
       ${validations.slice(0, 4).map(item => `
@@ -3550,8 +3605,7 @@ const FichajesModule = {
           <span class="insight-tag danger">${item.meta}</span>
         </div>
       `).join('')}
-      <div class="insight-note">Este bloque encaja con validaciones e incidencias oficiales cuando el token tenga alcance suficiente de equipo.</div>
-    ` : `<div class="insight-empty">No hay validaciones sugeridas con los datos actuales.</div>`);
+    ` : `<div class="insight-empty">Todo validado correctamente.</div>`);
 
     setBody('insight-anomalias-body', `
       <div class="insight-kpi">
@@ -3561,7 +3615,7 @@ const FichajesModule = {
         </div>
         <div class="insight-kpi-item">
           <span class="label">En vivo</span>
-          <span class="value">${liveCount}</span>
+          <span class="value">${isSingleUser ? (rows.some(r=>r.isLive) ? 'SÍ' : 'NO') : liveCount}</span>
         </div>
         <div class="insight-kpi-item">
           <span class="label">Fragmentados</span>
@@ -3572,9 +3626,6 @@ const FichajesModule = {
           <span class="value">${anomalies.filter(a => a.label === 'Ausencia con actividad').length}</span>
         </div>
       </div>
-      ${anomalies.length ? `
-        <div class="insight-note">Anomalías destacadas: ${anomalies.slice(0, 2).map(a => `${a.employeeName} (${a.label})`).join(' · ')}</div>
-      ` : `<div class="insight-note">Sin anomalías fuertes en el rango filtrado.</div>`}
     `);
 
     setBody('insight-solicitudes-body', upcoming.length ? `
@@ -3584,8 +3635,7 @@ const FichajesModule = {
           <span class="insight-tag success">${item.date}</span>
         </div>
       `).join('')}
-      <div class="insight-note">Vista basada en ausencias ya calendarizadas. Encaja con request/v1 cuando se conecten solicitudes oficiales.</div>
-    ` : `<div class="insight-empty">No hay ausencias próximas visibles en los próximos 14 días con los filtros actuales.</div>`);
+    ` : `<div class="insight-empty">Sin ausencias próximas para este perfil.</div>`);
   }
 };
 
