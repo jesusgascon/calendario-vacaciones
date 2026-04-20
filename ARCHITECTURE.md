@@ -15,7 +15,8 @@ Para garantizar que el dashboard funcione incluso en entornos corporativos restr
 La API de Sesame devuelve datos en múltiples formatos (REST estándar y BI Engine). El dashboard utiliza una capa de normalización que:
 1. **Unifica**: Convierte estructuras anidadas de "Work Entries" en un modelo plano de `Signings`.
 2. **Cruce (Smart Match)**: Cruza el calendario de ausencias (módulo `schedule/v1`) con los fichajes (`work-entries/v3`) en tiempo real.
-3. **Validación**: Detecta inconsistencias (fichajes en días de vacaciones, falta de marcaje de salida) antes de renderizar la UI.
+3. **Rastreo de Origen (Device Context)**: Extrae y correlaciona metadatos de dispositivo (`origin`) desde el motor BI y objetos `checkIn/checkOut` para monitorizar el canal de entrada (Web, Móvil, Tablet).
+4. **Validación**: Detecta inconsistencias (fichajes en días de vacaciones, falta de marcaje de salida) antes de renderizar la UI.
 
 ## 3. Monitorización de Presencia en Vivo (Radar)
 

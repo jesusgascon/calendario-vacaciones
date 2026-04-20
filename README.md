@@ -47,6 +47,7 @@ Un dashboard de alta fidelidad, inteligencia operativa y monitorización avanzad
 - **Análisis Semanal ("Mis Patrones")**: Media de entrada/salida y detección de jornada más productiva.
 - **Cruce Inteligente (Smart Match)**: Vincula fichajes reales con ausencias del calendario.
 - **Panel de Detalle Expandible**: Vista completa de cada tramo de trabajo con horario, duración y tipo.
+- **Rastreo de Origen (Device Tracking)**: Identificación del dispositivo de entrada y salida (Web, App, Tablet) con soporte para transiciones (Origen -> Destino).
 - **Timeline de Actividad**: Vista gráfica panorámica con indicadores de Trabajo, Pausas y Ausencias.
 - **Exportación Directa**: Reportes en CSV y JSON con filtros aplicados.
 
@@ -206,6 +207,17 @@ Controlador principal del módulo de fichajes. Gestiona:
 ---
 
 ## 📝 Changelog
+
+### v1.2.0 — 2026-04-20
+- ✨ **feat**: Seguimiento de Origen de Fichajes (Device Tracking).
+  - Nueva columna "ORIGEN" en el detalle expandible de fichajes.
+  - Soporte para transiciones de dispositivo (ej. Web -> App Móvil) si el empleado cambia de medio durante el tramo.
+  - Iconografía dedicada para Web 🌐, App 📱 y Tablet/Wall 📟.
+- 🎨 **style**: Mejoras críticas de legibilidad y contraste.
+  - Rediseño del modal de detalles del calendario para **Tema Claro** (fuentes con mayor peso y contraste).
+  - Mejora de visibilidad del nombre de empresa en la barra lateral (Modo Oscuro).
+  - Selector de empresa rediseñado con iconos y colores de alto contraste para evitar "texto blanco sobre fondo blanco".
+- 🛠️ **refactor**: Normalización mejorada de orígenes desde Sesame BI y API v3.
 
 ### v1.1.0 — 2026-04-20
 - ✨ **feat**: Panel de Cumpleaños del Equipo en módulo Fichajes.
