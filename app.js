@@ -2860,8 +2860,13 @@ const FichajesModule = {
   },
 
   updateAnalyticsWidgets() {
-    // Esta función ha sido sustituida por renderOperationalInsights,
-    // que es reactiva al cambio de empleado en el desplegable.
+    // Restauramos la visibilidad de los bloques
+    const pw = document.getElementById('patterns-widget');
+    const rw = document.getElementById('radar-widget');
+    if (pw) pw.style.display = 'block';
+    if (rw) rw.style.display = 'block';
+
+    // La lógica de cálculo ahora vive en renderOperationalInsights para ser reactiva
   },
 
   setupAutoRefresh() {
