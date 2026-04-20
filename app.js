@@ -3142,6 +3142,8 @@ const FichajesModule = {
         date: c.date || (inStr || outStr || '').split('T')[0] || '1970-01-01',
         checkIn: inStr,
         checkOut: outStr,
+        originIn: (c.checkIn && c.checkIn.origin) || c.origin || '',
+        originOut: (c.checkOut && c.checkOut.origin) || c.origin || '',
         secondsWorked: c.secondsWorked || c.accumulatedSeconds || c.seconds || 0,
         type: (c.checkType || c.type || c.entryType || 'work').toLowerCase(),
         employeeName: c.employeeName || 
@@ -3274,7 +3276,8 @@ const FichajesModule = {
          duration: durationLabel,
          type: typeClass,
          typeLabel: typeLabel,
-         loc: record.origin || 'Oficina'
+         originIn: record.originIn || 'Oficina',
+         originOut: record.originOut || 'Oficina'
        });
       
       grouped[key].totalWorkedSeconds += (record.secondsWorked || 0);
@@ -3454,16 +3457,40 @@ const FichajesModule = {
               <div class="details-layout-split">
                 <div class="signings-table-wrapper">
                   <table class="details-tech-table">
-                    <thead><tr><th>HORARIO</th><th>DURACIÓN</th><th>TIPO</th></tr></thead>
+                    <thead><tr><th>HORARIO</th><th>DURACIÓN</th><th>TIPO</th><th>ORIGEN</th></tr></thead>
                     <tbody>
                       ${(row.entries || []).map(e => {
                         const icon = e.type === 'work' ? '💼' : (e.type === 'pause' ? '☕' : '🚪');
                         const typeCls = e.type === 'work' ? 'type-work' : (e.type === 'pause' ? 'type-pause' : 'type-abs');
+                        
+                        // Map origin to nice labels/icons
+                        const getOInfo = (val) => {
+                          const o = (val || '').toLowerCase();
+                          if (o.includes('web')) return { label: 'Web', icon: '🌐' };
+                          if (o.includes('app') || o.includes('mobile')) return { label: 'App', icon: '📱' };
+                          if (o.includes('wall') || o.includes('tablet')) return { label: 'Tablet', icon: '📟' };
+                          return { label: val || 'Oficina', icon: '📍' };
+                        };
+
+                        const oIn = getOInfo(e.originIn);
+                        const oOut = getOInfo(e.originOut);
+                        
+                        let originContent = `<span class="td-loc">${oIn.icon} ${oIn.label}</span>`;
+                        // If different, show "From -> To"
+                        if (e.originIn !== e.originOut && e.originOut && e.out !== '--:--') {
+                           originContent = `<div class="td-loc-multi" title="${oIn.label} → ${oOut.label}">
+                             <span class="td-loc">${oIn.icon}</span>
+                             <span style="opacity:0.5; font-size:0.7rem;">→</span>
+                             <span class="td-loc">${oOut.icon}</span>
+                           </div>`;
+                        }
+
                         return `
                         <tr>
                           <td><strong>${e.in} - ${e.out}</strong></td>
                           <td><span class="td-duration">${e.duration || '--'}</span></td>
                           <td><span class="signing-type-badge ${typeCls}">${icon} ${e.typeLabel || 'Trabajo'}</span></td>
+                          <td>${originContent}</td>
                         </tr>`;
                       }).join('')}
                     </tbody>
