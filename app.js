@@ -723,7 +723,7 @@ function applyCompanyBranding(company) {
   
   // Custom Branding Logic
   let brandColor = company.brandColor;
-  let logoUrl = company.logoUrl;
+  let logoUrl = company.logoUrl || company.logo;
 
   // Fallback to corporate defaults if no manual color is provided
   if (!brandColor) {
@@ -827,6 +827,9 @@ function switchCompany(cid) {
   STATE.companyId = next.companyId;
   STATE.backendUrl = next.backendUrl;
   saveCredentials();
+  
+  // Apply branding immediately for better UX
+  applyCompanyBranding(next);
   
   // Persist choice to server
   if (isLocalProxy()) {
@@ -1303,7 +1306,7 @@ async function finalizeLogin(companyData = {}) {
     id: STATE.companyId,
     name: companyName,
     brandColor: brandColor,
-    logo: logoUrl
+    logoUrl: logoUrl
   });
   
   showApp();
