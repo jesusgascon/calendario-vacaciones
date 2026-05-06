@@ -338,6 +338,22 @@ function upsertEmployee(emp) {
   const photo = emp.imageProfileURL || emp.imageProfile || emp.photoUrl || emp.photo || emp.avatarUrl || emp.avatar || '';
   updated.imageProfileURL = photo || existing.imageProfileURL || '';
   
+  // Extraer horario teórico desde scheduleTemplateViews si viene en el payload
+  if (emp.scheduleTemplateViews && emp.scheduleTemplateViews.length > 0) {
+    const tmpl = emp.scheduleTemplateViews[0].scheduleTemplate;
+    if (tmpl) {
+      updated.workdays = {
+        1: (tmpl.mondayMinutes || 0) * 60,
+        2: (tmpl.tuesdayMinutes || 0) * 60,
+        3: (tmpl.wednesdayMinutes || 0) * 60,
+        4: (tmpl.thursdayMinutes || 0) * 60,
+        5: (tmpl.fridayMinutes || 0) * 60,
+        6: (tmpl.saturdayMinutes || 0) * 60,
+        0: (tmpl.sundayMinutes || 0) * 60
+      };
+    }
+  }
+
   STATE.allEmployees.set(idStr, updated);
   
   // El estado central es STATE.allEmployees (Map)
@@ -520,27 +536,57 @@ async function fetchEmployees() {
       results = companyData.data || companyData || [];
     }
 
-    return results.map(e => {
-      // Intentar obtener la jornada laboral del contrato activo
-      const contract = (e.contracts && e.contracts.length > 0) ? e.contracts[0] : null;
-      const workdays = contract ? {
-        1: contract.mondaySeconds ?? 28800,
-        2: contract.tuesdaySeconds ?? 28800,
-        3: contract.wednesdaySeconds ?? 28800,
-        4: contract.fridaySeconds ?? 28800,
-        5: contract.fridaySeconds ?? 28800,
-        6: contract.saturdaySeconds ?? 0,
-        0: contract.sundaySeconds ?? 0
-      } : null;
+    // 3. Enriquecer con los horarios teóricos (contracts/scheduleTemplateViews)
+    // Hacemos llamadas en paralelo para obtener el detalle real de cada empleado
+    const detailedResults = await Promise.allSettled(
+      results.map(e => apiFetch(`/api/v3/employees/${e.id}`).catch(() => null))
+    );
+    
+    return results.map((e, index) => {
+      const detailRes = detailedResults[index];
+      let detail = {};
+      if (detailRes.status === 'fulfilled' && detailRes.value) {
+         detail = detailRes.value.data || detailRes.value || {};
+      }
+      
+      let workdays = null;
+      // Extraer desde scheduleTemplateViews (la fuente de verdad de Sesame en 2026)
+      if (detail.scheduleTemplateViews && detail.scheduleTemplateViews.length > 0) {
+        const tmpl = detail.scheduleTemplateViews[0].scheduleTemplate;
+        if (tmpl) {
+          workdays = {
+            1: (tmpl.mondayMinutes || 0) * 60,
+            2: (tmpl.tuesdayMinutes || 0) * 60,
+            3: (tmpl.wednesdayMinutes || 0) * 60,
+            4: (tmpl.thursdayMinutes || 0) * 60,
+            5: (tmpl.fridayMinutes || 0) * 60,
+            6: (tmpl.saturdayMinutes || 0) * 60,
+            0: (tmpl.sundayMinutes || 0) * 60
+          };
+        }
+      } 
+      // Fallback a contracts por si acaso
+      else if (detail.contracts && detail.contracts.length > 0) {
+         const contract = detail.contracts[0];
+         workdays = {
+            1: contract.mondaySeconds ?? 28800,
+            2: contract.tuesdaySeconds ?? 28800,
+            3: contract.wednesdaySeconds ?? 28800,
+            4: contract.thursdaySeconds ?? 28800, // Fix typo here (was fridaySeconds)
+            5: contract.fridaySeconds ?? 28800,
+            6: contract.saturdaySeconds ?? 0,
+            0: contract.sundaySeconds ?? 0
+         };
+      }
 
       return {
         id: e.id,
-        firstName: e.firstName,
-        lastName: e.lastName,
-        imageProfileURL: e.imageProfileURL || e.photoUrl || e.avatarUrl || '',
-        email: e.email || e.companyEmail || '',
-        phone: e.personalPhone || e.companyPhone || e.phone || '',
-        jobTitle: e.jobTitle || e.position?.name || '',
+        firstName: detail.firstName || e.firstName,
+        lastName: detail.lastName || e.lastName,
+        imageProfileURL: detail.imageProfileURL || e.imageProfileURL || e.photoUrl || e.avatarUrl || '',
+        email: detail.email || e.email || e.companyEmail || '',
+        phone: detail.phone || e.personalPhone || e.companyPhone || e.phone || '',
+        jobTitle: detail.jobTitle || e.jobTitle || e.position?.name || '',
         birthDate: e.birthDate || e.birthday || e.dateOfBirth || e.date_of_birth || 
                    (e.personalData && (e.personalData.birthDate || e.personalData.birthday)) || 
                    (e.details && e.details.birthDate) || '',
