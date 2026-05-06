@@ -2906,26 +2906,38 @@ const FichajesModule = {
         });
         biData = res.data || res || [];
         
+        // --- FALLBACK: Escaneo de metadatos de fichajes para encontrar jornada teórica ---
+        // A veces Sesame inyecta el dato en cada fichaje aunque no lo pidamos explícitamente
+        biData.forEach(row => {
+          if (row.employeeId && row.date && row.theoreticSeconds) {
+            biTheoreticMap.set(`${row.employeeId}_${row.date}`, Number(row.theoreticSeconds));
+          }
+        });
+
         // 2. Obtener JORNADA TEÓRICA REAL (La que manda sobre todo, festivos incluidos)
-        const resTheo = await apiFetchBi({
-           "from": "schedule_context_daily_computed",
-           "select": [
-              {"field": "schedule_context_daily_computed.date", "alias": "date"},
-              {"field": "schedule_context_daily_computed.employee_id", "alias": "employeeId"},
-              {"field": "schedule_context_daily_computed.theoretic_seconds", "alias": "theoreticSeconds"}
-           ],
-           "where": [
-              {"field": "schedule_context_daily_computed.date", "operator": ">=", "value": start},
-              {"field": "schedule_context_daily_computed.date", "operator": "<=", "value": end}
-           ],
-           "limit": 5000
-        });
-        const theoData = resTheo.data || resTheo || [];
-        theoData.forEach(row => {
-           if (row.employeeId && row.date) {
-             biTheoreticMap.set(`${row.employeeId}_${row.date}`, Number(row.theoreticSeconds));
-           }
-        });
+        try {
+          const resTheo = await apiFetchBi({
+             "from": "schedule_context_daily_computed",
+             "select": [
+                {"field": "schedule_context_daily_computed.date", "alias": "date"},
+                {"field": "schedule_context_daily_computed.employee_id", "alias": "employeeId"},
+                {"field": "schedule_context_daily_computed.theoretic_seconds", "alias": "theoreticSeconds"}
+             ],
+             "where": [
+                {"field": "schedule_context_daily_computed.date", "operator": ">=", "value": start},
+                {"field": "schedule_context_daily_computed.date", "operator": "<=", "value": end}
+             ],
+             "limit": 5000
+          });
+          const theoData = resTheo.data || resTheo || [];
+          theoData.forEach(row => {
+             if (row.employeeId && row.date) {
+               biTheoreticMap.set(`${row.employeeId}_${row.date}`, Number(row.theoreticSeconds));
+             }
+          });
+        } catch (e) {
+          console.warn("Sub-query BI failed (Expected if not advanced):", e);
+        }
         this.biTheoreticMap = biTheoreticMap;
 
       } catch (biErr) {
