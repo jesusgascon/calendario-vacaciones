@@ -1239,7 +1239,7 @@ body {
 
 /* New Robust Company Manager Styles */
 .company-manager {
-  margin-top: auto;
+  margin-top: 10px;
   padding: 12px 0;
   display: flex;
   flex-direction: column;
@@ -2009,6 +2009,16 @@ body {
   font-family: inherit; font-size: 0.9rem; cursor: pointer; outline: none;
 }
 .beautiful-select:focus { border-color: var(--accent); }
+
+[data-theme="dark"] .beautiful-select option {
+  background-color: #131621;
+  color: #ffffff;
+}
+
+[data-theme="light"] .beautiful-select option {
+  background-color: #ffffff;
+  color: #333333;
+}
 
 /* Table */
 .signings-table-container {

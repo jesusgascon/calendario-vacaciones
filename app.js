@@ -92,7 +92,7 @@ const STATE = {
     'absence-section': localStorage.getItem('sidebar_section_absence_collapsed') === 'true',
     'employee-section': localStorage.getItem('sidebar_section_employee_collapsed') === 'true'
   },
-  currentModule: 'vacaciones',
+  currentModule: localStorage.getItem('ssm_current_module') || 'vacaciones',
   presenceMap: new Map() // employeeId -> status ('work', 'pause', 'out')
 };
 
@@ -1127,6 +1127,7 @@ function showScreen(screenId) {
  */
 function switchModule(module) {
   STATE.currentModule = module;
+  localStorage.setItem('ssm_current_module', module);
   
   // Actualizar estados visuales de los botones del switcher
   $$('.module-btn').forEach(btn => {
@@ -1235,6 +1236,7 @@ async function startApp() {
   if (STATE.sidebarCollapsed) {
     document.body.classList.add('sidebar-collapsed');
   }
+  switchModule(STATE.currentModule);
 
   // Wire employee filters
   const empSearch = $('employee-search');
@@ -1485,7 +1487,7 @@ async function finalizeLogin(companyData = {}) {
   saveTokenTimestamp(STATE.companyId);
 
   // Recargar la lista de empresas guardadas y actualizar el selector inmediatamente
-  await loadConfig();
+  await loadSavedConfig();
   renderCompanySelector();
 
   applyCompanyBranding({

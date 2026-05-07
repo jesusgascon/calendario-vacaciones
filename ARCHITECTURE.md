@@ -17,6 +17,7 @@ La API de Sesame devuelve datos en múltiples formatos (REST estándar y BI Engi
 2. **Cruce (Smart Match)**: Cruza el calendario de ausencias (módulo `schedule/v1`) con los fichajes (`work-entries/v3`) en tiempo real.
 3. **Rastreo de Origen (Device Context)**: Extrae y correlaciona metadatos de dispositivo (`origin`) desde el motor BI y objetos `checkIn/checkOut` para monitorizar el canal de entrada (Web, Móvil, Tablet).
 4. **Validación**: Detecta inconsistencias (fichajes en días de vacaciones, falta de marcaje de salida) antes de renderizar la UI.
+5. **Incidence Detection Engine (v1.4.0)**: Capa de auditoría que realiza peticiones paralelas a los endpoints de la REST API (`/api/v3/check-incidences`, `/api/v3/work-entry-requests`) para interceptar solicitudes de borrado o edición que el motor de BI aún no ha consolidado. Realiza un *fuzzy match* por ID y timestamp para garantizar la integridad de los balances horarios.
 
 ## 3. Monitorización de Presencia en Vivo (Radar)
 
@@ -31,7 +32,13 @@ El radar de disponibilidad funciona mediante un sondeo optimizado a la ruta `/ap
   - `config.secrets.json`: Tokens USID y secretos de autenticación (ignorado por Git).
 - **Fusión en Memoria**: El servidor Python (`server.py`) fusiona ambos archivos en tiempo de ejecución, proporcionando una vista unificada al frontend sin exponer secretos en el repositorio.
 
-## 5. Visual Stack
+## 5. Capa de Persistencia y UX
+
+La aplicación minimiza la fricción del usuario mediante una gestión de estado persistente:
+- **LocalStorage**: Almacena el tema (Light/Dark), el estado de colapso de la sidebar y, desde la v1.4.0, el **módulo activo**.
+- **SessionStorage**: Mantiene la fecha de navegación actual para que el usuario no pierda el contexto temporal al navegar entre vistas.
+
+## 6. Visual Stack
 
 - **Motor UI**: Vanilla Javascript (ES6+). Sin frameworks pesados para garantizar una carga instantánea.
 - **Diseño**: CSS3 moderno con variables dinámicas, Flexbox y Grid Layout de alta densidad.

@@ -43,13 +43,18 @@ Un dashboard de alta fidelidad, inteligencia operativa y monitorización avanzad
 - **Radar de Anomalías**: KPIs de cumplimiento horario y fragmentación de jornada.
 - **Previsión de Ausencias**: Panel dedicado a las próximas vacaciones y permisos de los próximos 14 días.
 
-### 📊 Módulo de Fichajes
+### 📊 Módulo de Fichajes (Avanzado)
 - **Análisis Semanal ("Mis Patrones")**: Media de entrada/salida y detección de jornada más productiva.
+- **Detección de Cambios Pendientes (v1.4.0)**: Algoritmo de triple cruce que detecta solicitudes de borrado o edición en tiempo real desde la REST API, marcando los registros como `⏳ PENDIENTE` y excluyéndolos de los cálculos de horas antes de que Sesame los procese oficialmente.
 - **Cruce Inteligente (Smart Match)**: Vincula fichajes reales con ausencias del calendario.
 - **Panel de Detalle Expandible**: Vista completa de cada tramo de trabajo con horario, duración y tipo.
-- **Rastreo de Origen (Device Tracking)**: Identificación del dispositivo de entrada y salida (Web, App, Tablet) con soporte para transiciones (Origen -> Destino).
+- **Rastreo de Origen (Device Tracking)**: Identificación del dispositivo de entrada y salida (Web, App, Tablet) con soporte para transiciones.
 - **Timeline de Actividad**: Vista gráfica panorámica con indicadores de Trabajo, Pausas y Ausencias.
-- **Exportación Directa**: Reportes en CSV y JSON con filtros aplicados.
+
+### 🧩 Inteligencia de Interfaz (UX)
+- **Persistencia de Estado**: El sistema recuerda automáticamente en qué módulo estabas (Fichajes o Vacaciones) y en qué fecha, restaurándolo tras recargar la página.
+- **Secciones Colapsables**: Barra lateral optimizada con secciones que guardan su estado de apertura.
+- **Auto-Branding**: Adaptación dinámica de colores y logos según la empresa seleccionada.
 
 ### 👤 Fichas de Empleado
 - **Perfil Completo**: Email, teléfono, empresa, cargo, foto de perfil.
