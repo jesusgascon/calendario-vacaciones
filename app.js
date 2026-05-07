@@ -409,7 +409,7 @@ async function fetchCalendarGrouped(from, to, typeIds) {
   const params = {
     from, to,
     'types[]': typeIds.length ? typeIds : [],
-    view: 'employee',
+    // Nota: NO pasar view:'employee' — provoca 403 en cuentas con acceso de equipo (manager/admin)
   };
   const data = await apiFetch(
     `/api/v3/companies/${STATE.companyId}/calendars-grouped`,
@@ -1366,14 +1366,18 @@ async function finalizeLogin(companyData = {}) {
   if (typeof persistConfigToServer === 'function') {
     await persistConfigToServer(companyName, brandColor, logoUrl);
   }
-  
+
+  // Recargar la lista de empresas guardadas y actualizar el selector inmediatamente
+  await loadConfig();
+  renderCompanySelector();
+
   applyCompanyBranding({
     id: STATE.companyId,
     name: companyName,
     brandColor: brandColor,
     logoUrl: logoUrl
   });
-  
+
   showApp();
   await loadInitialData();
   startAutoRefresh();
